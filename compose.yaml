@@ -1,0 +1,45 @@
+name: vireyabot
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: vireyabot
+      POSTGRES_USER: vireyabot
+      POSTGRES_PASSWORD: vireyabot
+    volumes:
+      - vireyabot-postgres:/var/lib/postgresql/data
+    networks: [vireyabot]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vireyabot -d vireyabot"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  app:
+    build: .
+    env_file: [.env]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://vireyabot:vireyabot@db:5432/vireyabot
+      DEFAULT_CONFIG_PATH: config/defaults.yaml
+    volumes:
+      - ./config:/app/config:ro
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    ports: ["8000:8000"]
+    networks: [vireyabot]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready')"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+networks:
+  vireyabot:
+    name: vireyabot-network
+
+volumes:
+  vireyabot-postgres:
+    name: vireyabot-postgres
