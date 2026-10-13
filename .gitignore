@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.mypy_cache/
+.pyright/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+
+# JavaScript / frontend
+node_modules/
+.pnpm-store/
+coverage/
+.vite/
+.next/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# Runtime data
+logs/
+data/
+storage/
+tmp/
+*.log
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.sql
+
+# Downloaded media and plugin artifacts
+media/
+cache/
+*.agent-plugin
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Multica local metadata
+.multica/
