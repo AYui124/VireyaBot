@@ -1,36 +1,39 @@
 # VireyaBot
 
-VireyaBot 是一个以 QQ 为主要入口的 Python AI Agent 平台，计划通过 SnowLuma / OneBot v11 接入 QQ，并提供：
+VireyaBot 是面向外部 SnowLuma / OneBot v11 的 AI Agent 平台。本阶段交付可部署的管理框架：管理员 Web 登录、PostgreSQL 配置存储、秘密加密和 Docker Compose 健康检查。SnowLuma、QQ、模型、搜索、记忆、工作流和插件不在本阶段范围内。
 
-- OpenAI Responses 及兼容模型服务；
-- 文本与图片理解；
-- 可配置、可版本化的人格提示词；
-- 基于 PostgreSQL 与 pgvector 的长期记忆；
-- Web 搜索和来源引用；
-- 受授权、安静时段和频率限制约束的主动会话；
-- Web 配置、运行状态和可视化日志；
-- 可视化工作流编排；
-- 可安装的 Python 插件及工作流组件。
+## 本地启动
 
-## 当前状态
+需要 Python 3.12、uv 和 Docker Compose。先准备本地引导配置：
 
-项目处于需求规划与工程基线阶段，尚未发布可运行版本。开发任务和阶段目标在 Multica 的 VireyaBot 项目中维护。
+```sh
+cp .env.example .env
+uv sync --frozen
+uv run python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
+# 将上一个命令输出写入 .env 的 CONFIG_MASTER_KEY，并修改 ADMIN_PASSWORD
 
-SnowLuma 由使用者独立部署并已连接 QQ。VireyaBot 只通过后续提供的 OneBot WebSocket/HTTP 连接信息接入，不负责部署 SnowLuma、登录 QQ 或维护 QQ 会话。
+docker compose up --build -d
+docker compose ps
+```
 
-## 第一阶段里程碑
+应用地址为 <http://localhost:8000>。初始管理员由 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD` 引导；迁移由 Compose 应用容器执行。数据库配置一旦写入，重启不会被 YAML 默认值覆盖。
 
-第一阶段先交付可部署框架，不接入 QQ 或模型：
+## 配置边界
 
-- FastAPI 应用、PostgreSQL、迁移和健康检查；
-- 单管理员登录及 Web 配置页面；
-- 普通配置与加密秘密配置保存到 PostgreSQL；
-- `compose.yaml` 和无秘密 YAML 默认配置；
-- 使用 Docker Compose 完成构建、启动、配置修改、重启持久化和数据库故障恢复验证。
+- `DATABASE_URL`、`CONFIG_MASTER_KEY`、初始管理员和 YAML 路径是启动引导项。
+- 普通设置和秘密设置均写入 PostgreSQL；秘密使用 Fernet 加密，API 只返回遮盖值。
+- `config/defaults.yaml` 只提供首次初始化的非秘密默认值。
+- `GET /health/live` 是进程存活检查；`GET /health/ready` 执行数据库连接检查。
+- `/api/login`、`/api/logout`、`/api/settings` 提供 JSON 管理接口，根路径提供最小 Web 配置页。
 
-配置职责：YAML 只提供无秘密默认值；环境变量只提供数据库连接、配置加密主密钥和初始管理员等引导值；LLM Key、SnowLuma Token、搜索凭据、服务地址及后续业务设置均由 Web 写入 PostgreSQL，运行时从数据库获取。数据库已有值不会被 YAML 在重启时覆盖。
+## 验证
 
-## 本地开发与部署验证
+```sh
+uv sync --frozen
+uv run ruff check app alembic
+uv run python -m compileall -q app alembic
+docker compose config
+```
 
 - Python 本地开发统一使用 `uv` 和仓库内 `.venv`，不得向系统 Python 或用户全局环境安装项目依赖。
 - 项目依赖通过 `pyproject.toml` 与 `uv.lock` 锁定，命令优先使用 `uv run`。
@@ -60,3 +63,4 @@ SnowLuma 由使用者独立部署并已连接 QQ。VireyaBot 只通过后续提�
 ## 许可证
 
 本项目使用 [Apache License 2.0](LICENSE)。SnowLuma 及其他第三方依赖分别受其自身许可证约束。
+验收环境停止时使用 `docker compose stop`，不删除 `vireyabot-postgres` 数据卷。
