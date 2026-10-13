@@ -20,7 +20,8 @@ VireyaBot is a Python AI agent platform centered on QQ through SnowLuma / OneBot
 
 ## Product boundaries
 
-- SnowLuma is an external OneBot v11 protocol implementation. Do not copy or modify its source without an explicit license review.
+- SnowLuma is an external OneBot v11 protocol implementation. Development and deployment use the user's already deployed, QQ-connected SnowLuma instance through connection details supplied at integration time.
+- Never add SnowLuma, QQ login, QR-code login, or QQ session persistence to VireyaBot's Docker Compose stack. Do not restart, reconfigure, upgrade, or otherwise administer the external SnowLuma instance unless the user explicitly requests it.
 - Prefer a maintained OneBot v11 Python adapter over reimplementing the protocol. SnowLuma-specific behavior belongs behind a narrow gateway.
 - PostgreSQL is the source of truth. Use pgvector for semantic memory unless a task explicitly changes this decision.
 - Persona prompts, memories, workflow versions, plugin versions, model profiles, and secrets are separate resources with explicit references.
@@ -49,6 +50,7 @@ VireyaBot is a Python AI agent platform centered on QQ through SnowLuma / OneBot
 - Deployment and integration verification must use Docker Compose on the available local Docker daemon. Host-only startup is useful for focused development but does not prove deployability.
 - Docker verification must build the project's images, start the declared services, apply database migrations, exercise health checks and the changed user path, then stop the stack without deleting unrelated volumes or containers.
 - Use project-scoped Compose names, networks, volumes, ports, and environment files. Never operate on Docker resources that were not created for VireyaBot.
+- Docker deployment tests cover VireyaBot and its owned dependencies only. SnowLuma remains external; use configurable WebSocket/HTTP endpoints and secrets supplied outside Git.
 
 ## Change discipline
 

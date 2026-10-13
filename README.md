@@ -16,12 +16,15 @@ VireyaBot 是一个以 QQ 为主要入口的 Python AI Agent 平台，计划通�
 
 项目处于需求规划与工程基线阶段，尚未发布可运行版本。开发任务和阶段目标在 Multica 的 VireyaBot 项目中维护。
 
+SnowLuma 由使用者独立部署并已连接 QQ。VireyaBot 只通过后续提供的 OneBot WebSocket/HTTP 连接信息接入，不负责部署 SnowLuma、登录 QQ 或维护 QQ 会话。
+
 ## 本地开发与部署验证
 
 - Python 本地开发统一使用 `uv` 和仓库内 `.venv`，不得向系统 Python 或用户全局环境安装项目依赖。
 - 项目依赖通过 `pyproject.toml` 与 `uv.lock` 锁定，命令优先使用 `uv run`。
 - 集成与部署验收使用本地 Docker Compose 实际构建、启动、迁移和健康检查；仅在宿主机运行不能作为部署完成证据。
 - Docker 资源必须使用项目独立名称，不能修改或删除与 VireyaBot 无关的容器、网络和数据卷。
+- VireyaBot 的 Compose 不包含 SnowLuma；部署测试连接外部实例，连接地址和 Token 通过未纳入 Git 的环境配置提供。
 
 ## 设计原则
 
