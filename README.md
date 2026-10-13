@@ -38,6 +38,14 @@ SnowLuma 由使用者独立部署并已连接 QQ。VireyaBot 只通过后续提�
 - Docker 资源必须使用项目独立名称，不能修改或删除与 VireyaBot 无关的容器、网络和数据卷。
 - VireyaBot 的 Compose 不包含 SnowLuma；部署测试连接外部实例，连接地址和 Token 通过未纳入 Git 的环境配置提供。
 
+## 开发分支流程
+
+- `dev` 是项目集成分支，所有开发任务从 `dev` 创建独立 worktree 和任务分支。
+- 任务完成后必须提交全部交付内容，并在本地 `dev` worktree 完成合并与冲突处理。
+- 合并后的 `dev` 推送到 `origin/dev`，随后创建或更新 `dev` → `main` Pull Request 供人工审核。
+- 禁止直接推送远端 `main`，禁止强制推送 `main` 或 `dev`，未经明确授权不得合并 PR。
+- 单独推送任务分支不算交付完成；以本地 `dev`、`origin/dev` 和开放 PR 一致为准。
+
 ## 设计原则
 
 - QQ 协议层与 Agent 核心解耦；
