@@ -40,11 +40,13 @@ SnowLuma 由使用者独立部署并已连接 QQ。VireyaBot 只通过后续提�
 
 ## 开发分支流程
 
-- `dev` 是项目集成分支，所有开发任务从 `dev` 创建独立 worktree 和任务分支。
+- `dev` 是项目集成分支，固定集成 worktree 为 `/opt/projects/VireyaBot-worktrees/dev`；手动创建的开发任务 worktree 必须位于 `/opt/projects/VireyaBot-worktrees/<任务或用途>`。
 - 任务完成后必须提交全部交付内容，并在本地 `dev` worktree 完成合并与冲突处理。
 - 合并后的 `dev` 推送到 `origin/dev`，随后创建或更新 `dev` → `main` Pull Request 供人工审核。
 - 禁止直接推送远端 `main`，禁止强制推送 `main` 或 `dev`，未经明确授权不得合并 PR。
 - 单独推送任务分支不算交付完成；以本地 `dev`、`origin/dev` 和开放 PR 一致为准。
+- `/opt/projects/VireyaBot-worktrees` 是项目受控本地 worktree 的固定根目录，不在其他 `/opt` 路径创建持久 worktree。
+- Multica daemon 自动创建的临时任务 worktree 属于平台运行目录，不手动移动或重命名。
 
 ## 设计原则
 

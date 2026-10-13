@@ -59,7 +59,7 @@ VireyaBot is a Python AI agent platform centered on QQ through SnowLuma / OneBot
 
 ## Git delivery workflow
 
-- `dev` is the integration branch and the required base for project development. Every implementation task runs in its own Git worktree and task branch created from `dev`.
+- `dev` is the integration branch and the required base for project development. The persistent integration worktree is `/opt/projects/VireyaBot-worktrees/dev`. Every manually managed implementation worktree must be created from `dev` under `/opt/projects/VireyaBot-worktrees/<issue-or-purpose>`.
 - A task is not complete until all intended changes are committed. Never leave the deliverable only as uncommitted work in a worktree.
 - After verification, merge the task branch into the local `dev` integration worktree. Use a non-fast-forward merge when practical so the task boundary remains visible.
 - Resolve integration conflicts in the `dev` worktree; do not rewrite or discard unrelated user changes.
@@ -67,6 +67,8 @@ VireyaBot is a Python AI agent platform centered on QQ through SnowLuma / OneBot
 - NEVER push directly to `origin/main`. NEVER force-push `main` or `dev`. NEVER merge the pull request into `main` unless the user explicitly authorizes that merge.
 - Do not treat pushing an individual task branch as delivery. The canonical delivered state is the committed local `dev` branch, its matching `origin/dev`, and the open `dev` → `main` pull request.
 - If another task is running or the `dev` integration worktree is not clean, coordinate and wait rather than merging over active work.
+- `/opt/projects/VireyaBot-worktrees` is the fixed root for project-controlled local worktrees. Do not create new persistent VireyaBot worktrees beside the repository or under another `/opt` path.
+- Multica may create ephemeral task worktrees inside its daemon-managed workspace. Those paths are platform-owned and MUST NOT be moved or renamed manually; only persistent integration and manually managed recovery worktrees use the fixed project root.
 
 ## Change discipline
 
