@@ -18,6 +18,18 @@ VireyaBot 是一个以 QQ 为主要入口的 Python AI Agent 平台，计划通�
 
 SnowLuma 由使用者独立部署并已连接 QQ。VireyaBot 只通过后续提供的 OneBot WebSocket/HTTP 连接信息接入，不负责部署 SnowLuma、登录 QQ 或维护 QQ 会话。
 
+## 第一阶段里程碑
+
+第一阶段先交付可部署框架，不接入 QQ 或模型：
+
+- FastAPI 应用、PostgreSQL、迁移和健康检查；
+- 单管理员登录及 Web 配置页面；
+- 普通配置与加密秘密配置保存到 PostgreSQL；
+- `compose.yaml` 和无秘密 YAML 默认配置；
+- 使用 Docker Compose 完成构建、启动、配置修改、重启持久化和数据库故障恢复验证。
+
+配置职责：YAML 只提供无秘密默认值；环境变量只提供数据库连接、配置加密主密钥和初始管理员等引导值；LLM Key、SnowLuma Token、搜索凭据、服务地址及后续业务设置均由 Web 写入 PostgreSQL，运行时从数据库获取。数据库已有值不会被 YAML 在重启时覆盖。
+
 ## 本地开发与部署验证
 
 - Python 本地开发统一使用 `uv` 和仓库内 `.venv`，不得向系统 Python 或用户全局环境安装项目依赖。

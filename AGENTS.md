@@ -24,6 +24,10 @@ VireyaBot is a Python AI agent platform centered on QQ through SnowLuma / OneBot
 - Never add SnowLuma, QQ login, QR-code login, or QQ session persistence to VireyaBot's Docker Compose stack. Do not restart, reconfigure, upgrade, or otherwise administer the external SnowLuma instance unless the user explicitly requests it.
 - Prefer a maintained OneBot v11 Python adapter over reimplementing the protocol. SnowLuma-specific behavior belongs behind a narrow gateway.
 - PostgreSQL is the source of truth. Use pgvector for semantic memory unless a task explicitly changes this decision.
+- Runtime business configuration is database-backed. LLM keys, SnowLuma tokens, search credentials, provider endpoints, personas, workflow settings, and later feature configuration must be read through the PostgreSQL configuration service, not directly from environment variables.
+- `compose.yaml` owns service topology, project-scoped networks, volumes, ports, and health checks. Committed YAML configuration contains non-secret startup defaults only.
+- Environment variables are limited to bootstrap values required before PostgreSQL configuration can be read: database connection, configuration-encryption master key, initial administrator bootstrap, and optional YAML path.
+- PostgreSQL values override YAML defaults after initialization. Application restart must never overwrite an administrator-saved database value from YAML.
 - Persona prompts, memories, workflow versions, plugin versions, model profiles, and secrets are separate resources with explicit references.
 - Private-chat memories must never leak into groups or other users.
 - Proactive messages require explicit enablement, quiet hours, cooldowns, frequency limits, and a global kill switch.
@@ -51,6 +55,7 @@ VireyaBot is a Python AI agent platform centered on QQ through SnowLuma / OneBot
 - Docker verification must build the project's images, start the declared services, apply database migrations, exercise health checks and the changed user path, then stop the stack without deleting unrelated volumes or containers.
 - Use project-scoped Compose names, networks, volumes, ports, and environment files. Never operate on Docker resources that were not created for VireyaBot.
 - Docker deployment tests cover VireyaBot and its owned dependencies only. SnowLuma remains external; use configurable WebSocket/HTTP endpoints and secrets supplied outside Git.
+- The first implementation milestone is a vertical framework slice: Web login and configuration, PostgreSQL persistence, encrypted secret settings, YAML/bootstrap configuration, migrations, and a verified Docker Compose deployment. SnowLuma, LLM, workflow, and plugin features build on this foundation.
 
 ## Change discipline
 
