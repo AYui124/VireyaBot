@@ -39,6 +39,17 @@ VireyaBot is a Python AI agent platform centered on QQ through SnowLuma / OneBot
 - Configuration schemas generate standard forms. Do not allow plugins to inject arbitrary frontend JavaScript in the initial product stage.
 - Do not introduce Redis, Celery, Kafka, microservices, or an additional database unless a demonstrated requirement cannot be met by PostgreSQL and the application runtime.
 
+## Development environment
+
+- Local Python development must use `uv`; create and use the repository-local `.venv`. Never install project or development dependencies into the system Python or the user's global site-packages.
+- Declare dependencies in `pyproject.toml` and commit the `uv.lock` file. Use locked, reproducible commands such as `uv sync --frozen` in verification and automation.
+- Run Python commands through `uv run` unless the command executes inside a project Docker image.
+- Do not use global `pip install`, `pipx inject`, Poetry global environments, Conda base, or system package mutation for project dependencies.
+- Frontend dependencies must remain repository-local through the selected package manager. Never use global npm package installation for project tooling.
+- Deployment and integration verification must use Docker Compose on the available local Docker daemon. Host-only startup is useful for focused development but does not prove deployability.
+- Docker verification must build the project's images, start the declared services, apply database migrations, exercise health checks and the changed user path, then stop the stack without deleting unrelated volumes or containers.
+- Use project-scoped Compose names, networks, volumes, ports, and environment files. Never operate on Docker resources that were not created for VireyaBot.
+
 ## Change discipline
 
 - Read relevant code and existing patterns before editing.
