@@ -43,13 +43,14 @@ docker compose config
 
 ## 开发分支流程
 
-- `dev` 是项目集成分支，固定集成 worktree 为 `/opt/projects/VireyaBot-worktrees/dev`；手动创建的开发任务 worktree 必须位于 `/opt/projects/VireyaBot-worktrees/<任务或用途>`。
-- 任务完成后必须提交全部交付内容，并在本地 `dev` worktree 完成合并与冲突处理。
+- `/opt/projects/VireyaBot` 是固定主开发仓库，始终检出 `dev` 集成分支，并作为所有任务 worktree 的创建基础和本地合并位置。
+- 每个开发任务在修改代码前，必须从 `dev` 创建或复用 `/opt/projects/VireyaBot-worktrees/<任务或用途>`；不得直接在主开发仓库实现任务。
+- `/opt/projects/VireyaBot-worktrees` 是任务、规则和恢复 worktree 的唯一根目录，不在仓库旁、其他 `/opt` 路径或用户目录创建 VireyaBot worktree。
+- Multica 本地目录资源使用 `in_place`，避免平台在其他位置自动生成 worktree；任务进入主仓库后必须自行创建固定目录下的 worktree。
+- 任务完成后必须提交全部交付内容，并在 `/opt/projects/VireyaBot` 的本地 `dev` 完成合并与冲突处理。
 - 合并后的 `dev` 推送到 `origin/dev`，随后创建或更新 `dev` → `main` Pull Request 供人工审核。
 - 禁止直接推送远端 `main`，禁止强制推送 `main` 或 `dev`，未经明确授权不得合并 PR。
 - 单独推送任务分支不算交付完成；以本地 `dev`、`origin/dev` 和开放 PR 一致为准。
-- `/opt/projects/VireyaBot-worktrees` 是项目受控本地 worktree 的固定根目录，不在其他 `/opt` 路径创建持久 worktree。
-- Multica daemon 自动创建的临时任务 worktree 属于平台运行目录，不手动移动或重命名。
 
 ## 设计原则
 
