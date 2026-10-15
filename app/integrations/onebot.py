@@ -21,7 +21,7 @@ import httpx
 import websockets
 from websockets.asyncio.client import ClientConnection
 from websockets.asyncio.server import ServerConnection
-from websockets.exceptions import ConnectionClosed
+from websockets.exceptions import WebSocketException
 
 MASKED_TOKEN = "••••••••"
 DEFAULT_MEDIA_LIMIT = 10 * 1024 * 1024
@@ -252,7 +252,7 @@ class SnowLumaGateway:
                 delay = 0.25
             except asyncio.CancelledError:
                 raise
-            except (ConnectionClosed, OSError, TimeoutError, OneBotError) as exc:
+            except (WebSocketException, OSError, TimeoutError, OneBotError) as exc:
                 await self._close_connection(exc)
                 if not self._stop.is_set():
                     await asyncio.sleep(delay)
@@ -288,7 +288,7 @@ class SnowLumaGateway:
     async def _close_connection(self, error: BaseException) -> None:
         self._connected.clear()
         connection, self._connection = self._connection, None
-        if connection is not None and not connection.closed:
+        if connection is not None:
             await connection.close()
         for future in list(self._pending.values()):
             if not future.done():
