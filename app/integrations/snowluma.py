@@ -8,11 +8,11 @@ agent layer.
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.integrations.onebot import SnowLumaConfig, SnowLumaGateway
-from app.repository import read_snowluma_settings
+from app.repository import read_snowluma_runtime_settings
 
 
 async def build_snowluma_gateway(session: AsyncSession) -> SnowLumaGateway:
-    values = await read_snowluma_settings(session)
+    values = await read_snowluma_runtime_settings(session)
     return SnowLumaGateway(SnowLumaConfig.from_settings(values))
 
 
