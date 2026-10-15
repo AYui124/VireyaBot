@@ -29,7 +29,7 @@ React 单页管理控制台使用仓库内锁定的 React、TypeScript、Tailwin
 - SnowLuma / OneBot v11 模式、地址和 Token 配置，Token 不回传明文；
 - 桌面与窄屏布局、键盘焦点样式和清晰字段标签。
 
-真实浏览器回归可使用 Chromium 和 Playwright：先执行 `npm exec --yes playwright@1.50.0 -- install --with-deps chromium`，再在隔离应用容器上运行交互脚本，覆盖桌面/窄屏、焦点、加载、成功、失败和重复提交路径。脚本只使用合成账号与 Token。
+真实浏览器回归覆盖桌面/窄屏、焦点、加载、成功、失败和重复提交路径。测试只使用合成账号与 Token。
 
 `/`、`/settings` 和 `/snowluma` 均由 FastAPI 提供同一个前端入口，API 仍由 `/api/*` 提供。React Flow 画布属于后续工作流任务，本阶段不引入无用途依赖或假画布。
 
