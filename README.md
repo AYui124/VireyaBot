@@ -1,14 +1,15 @@
 # VireyaBot
 
-VireyaBot 是面向外部 SnowLuma / OneBot v11 的 AI Agent 平台。本阶段交付可部署的管理框架：管理员 Web 登录、PostgreSQL 配置存储、秘密加密和 Docker Compose 健康检查。SnowLuma、QQ、模型、搜索、记忆、工作流和插件不在本阶段范围内。
+VireyaBot 是面向外部 SnowLuma / OneBot v11 的 AI Agent 平台。本阶段交付可部署的管理框架：管理员 Web 登录、React + TypeScript 管理界面、PostgreSQL 配置存储、秘密加密和 Docker Compose 健康检查。SnowLuma、QQ、模型、搜索、记忆、工作流和插件不在本阶段范围内。
 
 ## 本地启动
 
-需要 Python 3.12、uv 和 Docker Compose。先准备本地引导配置：
+需要 Python 3.12、Node.js 22+、uv 和 Docker Compose。先准备本地引导配置：
 
 ```sh
 cp .env.example .env
 uv sync --frozen
+(cd frontend && npm ci && npm run typecheck && npm run build)
 uv run python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
 # 将上一个命令输出写入 .env 的 CONFIG_MASTER_KEY，并修改 ADMIN_PASSWORD
 
@@ -16,7 +17,19 @@ docker compose up --build -d
 docker compose ps
 ```
 
-应用地址为 <http://localhost:8000>。初始管理员由 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD` 引导；迁移由 Compose 应用容器执行。数据库配置一旦写入，重启不会被 YAML 默认值覆盖。
+应用地址为 <http://localhost:8000>。初始管理员由 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD` 引导；迁移由 Compose 应用容器执行。数据库配置一旦写入，重启不会被 YAML 默认值覆盖。生产镜像构建时会在 Docker 多阶段构建中生成前端静态资源，不需要单独运行 Node 服务。
+
+## 管理界面
+
+React 单页管理控制台提供：
+
+- 登录、登出、刷新和未登录拒绝；
+- 系统状态和数据库健康信息；
+- 通用设置的加载、保存中、成功、失败和校验反馈；
+- SnowLuma / OneBot v11 模式、地址和 Token 配置，Token 不回传明文；
+- 桌面与窄屏布局、键盘焦点样式和清晰字段标签。
+
+`/`、`/settings` 和 `/snowluma` 均由 FastAPI 提供同一个前端入口，API 仍由 `/api/*` 提供。React Flow 画布属于后续工作流任务，本阶段不引入无用途依赖或假画布。
 
 ## 配置边界
 

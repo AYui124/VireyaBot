@@ -1,4 +1,23 @@
+FROM node:22-alpine AS frontend-build
+WORKDIR /frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend ./
+RUN npm run build
+
 FROM python:3.12-slim
+
+ARG DEBIAN_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/debian
+ARG DEBIAN_SECURITY_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/debian-security
+
+RUN set -eux; \
+    sed -i \
+        -e "s|http://deb.debian.org/debian-security|${DEBIAN_SECURITY_MIRROR}|g" \
+        -e "s|http://deb.debian.org/debian|${DEBIAN_MIRROR}|g" \
+        /etc/apt/sources.list.d/debian.sources; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates curl; \
+    rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 UV_PROJECT_ENVIRONMENT=/opt/venv
 WORKDIR /app
@@ -11,6 +30,7 @@ COPY app ./app
 COPY alembic.ini .
 COPY alembic ./alembic
 COPY config ./config
+COPY --from=frontend-build /frontend/dist ./frontend/dist
 
 ENV PATH="/opt/venv/bin:$PATH"
 EXPOSE 8000
