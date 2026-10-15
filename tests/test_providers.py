@@ -15,7 +15,7 @@ from app.providers import (
 )
 
 
-def _provider(handler, *, search=False):
+def _provider(handler, *, search=False, embedding_dimensions=None):
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     return OpenAIResponsesProvider(
         ProviderConfig(
@@ -23,6 +23,7 @@ def _provider(handler, *, search=False):
             api_key="synthetic-key",
             responses_model="synthetic-responses",
             embedding_model="synthetic-embedding",
+            embedding_dimensions=embedding_dimensions,
             native_search_enabled=search,
         ),
         client=client,
@@ -37,19 +38,25 @@ def test_responses_image_structured_tool_and_embedding_protocols() -> None:
             assert payload["input"] == ["alpha", "beta"]
             return httpx.Response(200, json={"model": "synthetic-embedding", "data": [{"index": 0, "embedding": [0.1, 0.2]}, {"index": 1, "embedding": [0.3, 0.4]}], "usage": {"total_tokens": 2}})
         assert payload["model"] == "synthetic-responses"
+        if isinstance(payload["input"], list) and payload["input"] and payload["input"][0].get("type") == "function_call_output":
+            assert payload["input"][0] == {"type": "function_call_output", "call_id": "call-1", "output": "tool result"}
+            return httpx.Response(200, json={"id": "resp-tool", "status": "completed", "output": [{"type": "message", "content": [{"type": "output_text", "text": "tool answer"}]}]})
         assert payload["text"]["format"]["type"] == "json_schema"
         assert payload["tools"][0]["type"] == "function"
         assert payload["input"][0]["content"][1]["type"] == "input_image"
-        return httpx.Response(200, json={"id": "resp-1", "status": "completed", "output_text": '{"answer":"ok"}', "output": [{"type": "function_call", "call_id": "call-1", "name": "lookup", "arguments": "{}"}]})
+        assert payload["input"][0]["content"][1]["image_url"].startswith("data:image/png;base64,iVBOR")
+        return httpx.Response(200, json={"id": "resp-1", "status": "completed", "output": [{"type": "message", "content": [{"type": "output_text", "text": "standard answer"}]}, {"type": "function_call", "call_id": "call-1", "name": "lookup", "arguments": "{}"}]})
 
     async def run() -> None:
         provider, client = _provider(handler)
         try:
-            result = await provider.responses(ResponseRequest(input=[{"role": "user", "content": [{"type": "input_text", "text": "describe"}, {"type": "input_image", "image_url": "data:image/png;base64,AA=="}]}], response_format={"type": "json_schema", "name": "answer", "schema": {"type": "object"}}, tools=[{"type": "function", "name": "lookup", "parameters": {"type": "object"}}]), trace_id="trace-1")
+            result = await provider.responses(ResponseRequest(input=[{"role": "user", "content": [{"type": "input_text", "text": "describe"}, {"type": "input_image", "image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="}]}], response_format={"type": "json_schema", "name": "answer", "schema": {"type": "object"}}, tools=[{"type": "function", "name": "lookup", "parameters": {"type": "object"}}]), trace_id="trace-1")
             assert result.schema_version == "v1"
             assert result.trace_id == "trace-1"
-            assert result.output_text == '{"answer":"ok"}'
+            assert result.output_text == "standard answer"
             assert result.tool_calls[0].name == "lookup"
+            tool_result = await provider.responses(ResponseRequest(input=[{"type": "function_call_output", "call_id": "call-1", "output": "tool result"}]), trace_id="trace-tool-output")
+            assert tool_result.output_text == "tool answer"
             embedding = await provider.embeddings(["alpha", "beta"], trace_id="trace-2")
             assert embedding.schema_version == "v1"
             assert embedding.trace_id == "trace-2"
@@ -65,7 +72,7 @@ def test_streaming_native_search_and_nested_url_citations() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
         if payload.get("stream"):
-            body = 'data: {"type":"response.created"}\n\ndata: {"type":"response.output_text.delta","delta":"hi"}\n\ndata: {"type":"response.completed","response":{"status":"completed"}}\n\ndata: [DONE]\n\n'
+            body = 'data: {"type":"response.created"}\n\ndata: {"type":"response.output_item.added","item":{"type":"function_call","id":"fc-1","call_id":"call-stream-1","name":"lookup","arguments":"{}"}}\n\ndata: {"type":"response.output_text.delta","delta":"hi"}\n\ndata: {"type":"response.completed","response":{"status":"completed"}}\n\ndata: [DONE]\n\n'
             return httpx.Response(200, content=body.encode(), headers={"content-type": "text/event-stream"})
         assert payload["tools"] == [{"type": "web_search_preview"}]
         return httpx.Response(200, json={"id": "search-1", "status": "completed", "output_text": "answer", "output": [{"type": "message", "content": [{"type": "output_text", "text": "answer", "annotations": [{"type": "url_citation", "url": "https://example.test/result", "title": "Result"}]}]}]})
@@ -76,7 +83,8 @@ def test_streaming_native_search_and_nested_url_citations() -> None:
             events = [event async for event in provider.stream_responses(ResponseRequest(input="hello"), trace_id="trace-stream")]
             assert events[0].schema_version == "v1"
             assert events[0].trace_id == "trace-stream"
-            assert events[0].delta == "hi"
+            assert any(event.delta == "hi" for event in events)
+            assert any(event.output is not None and event.output.call_id == "call-stream-1" for event in events)
             result = await provider.search("query", trace_id="trace-search")
             assert result.citations == ["https://example.test/result"]
             matrix = {item.capability: item for item in provider.capability_matrix()}
@@ -187,6 +195,82 @@ def test_malformed_embedding_batches_fail_closed(data) -> None:
                 await provider.embeddings(["alpha", "beta"], trace_id="trace-embedding-invalid")
             assert raised.value.failure.error_code == ProviderErrorCode.UNAVAILABLE
             assert raised.value.failure.trace_id == "trace-embedding-invalid"
+        finally:
+            await client.aclose()
+
+    asyncio.run(run())
+
+
+def test_completed_refusal_is_a_stable_failure() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"id": "refused", "status": "completed", "output": [{"type": "message", "content": [{"type": "refusal", "refusal": "private reason"}]}]})
+
+    async def run() -> None:
+        provider, client = _provider(handler)
+        try:
+            with pytest.raises(ProviderFailure) as raised:
+                await provider.responses(ResponseRequest(input="hello"), trace_id="trace-refusal")
+            assert raised.value.failure.error_code == ProviderErrorCode.REFUSED
+            assert raised.value.failure.trace_id == "trace-refusal"
+            assert "private reason" not in str(raised.value)
+        finally:
+            await client.aclose()
+
+    asyncio.run(run())
+
+
+def test_unknown_request_version_and_conflicting_trace_do_not_call_upstream() -> None:
+    calls = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, json={"status": "completed", "output": []})
+
+    async def run() -> None:
+        nonlocal calls
+        with pytest.raises(ValueError, match="unsupported provider schema version"):
+            ResponseRequest(input="hello", schema_version="v999")
+        provider, client = _provider(handler)
+        try:
+            with pytest.raises(ProviderFailure) as raised:
+                await provider.responses(ResponseRequest(input="hello", trace_id="conflicting-trace"), trace_id="call-trace")
+            assert raised.value.failure.error_code == ProviderErrorCode.INVALID_REQUEST
+            assert calls == 0
+        finally:
+            await client.aclose()
+
+    asyncio.run(run())
+
+
+def test_embedding_dimensions_must_match_configuration() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"model": "synthetic-embedding", "data": [{"index": 0, "embedding": [0.1, 0.2]}]})
+
+    async def run() -> None:
+        provider, client = _provider(handler, embedding_dimensions=3)
+        try:
+            with pytest.raises(ProviderFailure) as raised:
+                await provider.embeddings(["alpha"], trace_id="trace-dimension")
+            assert raised.value.failure.error_code == ProviderErrorCode.UNAVAILABLE
+            assert raised.value.failure.trace_id == "trace-dimension"
+        finally:
+            await client.aclose()
+
+    asyncio.run(run())
+
+
+def test_streaming_422_is_classified_without_response_not_read() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(422, json={"error": {"code": "invalid_request"}})
+
+    async def run() -> None:
+        provider, client = _provider(handler)
+        try:
+            with pytest.raises(ProviderFailure) as raised:
+                _ = [event async for event in provider.stream_responses(ResponseRequest(input="hello"), trace_id="trace-stream-422")]
+            assert raised.value.failure.error_code == ProviderErrorCode.INVALID_REQUEST
+            assert raised.value.failure.trace_id == "trace-stream-422"
         finally:
             await client.aclose()
 
