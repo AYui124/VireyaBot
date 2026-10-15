@@ -1,6 +1,6 @@
 # VireyaBot
 
-VireyaBot 是面向外部 SnowLuma / OneBot v11 的 AI Agent 平台。本阶段交付可部署的管理框架：管理员 Web 登录、React + TypeScript 管理界面、PostgreSQL 配置存储、秘密加密和 Docker Compose 健康检查。SnowLuma、QQ、模型、搜索、记忆、工作流和插件不在本阶段范围内。
+VireyaBot 是面向外部 SnowLuma / OneBot v11 的 AI Agent 平台。本阶段交付可部署的管理框架：管理员 Web 登录、React + TypeScript + shadcn/ui 管理界面、PostgreSQL 配置存储、秘密加密和 Docker Compose 健康检查。SnowLuma、QQ、模型、搜索、记忆、工作流和插件不在本阶段范围内。
 
 ## 本地启动
 
@@ -21,13 +21,15 @@ docker compose ps
 
 ## 管理界面
 
-React 单页管理控制台提供：
+React 单页管理控制台使用仓库内锁定的 React、TypeScript、Tailwind CSS、class-variance-authority 和 `cn` 工具构建 shadcn/ui 风格组件，提供：
 
 - 登录、登出、刷新和未登录拒绝；
 - 系统状态和数据库健康信息；
 - 通用设置的加载、保存中、成功、失败和校验反馈；
 - SnowLuma / OneBot v11 模式、地址和 Token 配置，Token 不回传明文；
 - 桌面与窄屏布局、键盘焦点样式和清晰字段标签。
+
+真实浏览器回归可使用 Chromium 和 Playwright：先执行 `npm exec --yes playwright@1.50.0 -- install --with-deps chromium`，再在隔离应用容器上运行交互脚本，覆盖桌面/窄屏、焦点、加载、成功、失败和重复提交路径。脚本只使用合成账号与 Token。
 
 `/`、`/settings` 和 `/snowluma` 均由 FastAPI 提供同一个前端入口，API 仍由 `/api/*` 提供。React Flow 画布属于后续工作流任务，本阶段不引入无用途依赖或假画布。
 
