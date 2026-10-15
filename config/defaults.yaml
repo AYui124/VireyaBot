@@ -8,3 +8,12 @@ features:
 server:
   host: 0.0.0.0
   port: 8000
+
+provider:
+  base_url: https://api.openai.com/v1
+  responses_model: gpt-4.1-mini
+  embedding_model: text-embedding-3-small
+  embedding_dimensions: null
+  timeout_seconds: 30.0
+  organization: ""
+  native_search_enabled: false
