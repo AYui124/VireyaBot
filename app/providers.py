@@ -41,6 +41,7 @@ class ProviderErrorCode(StrEnum):
     RATE_LIMITED = "provider.rate_limited"
     TIMEOUT = "provider.timeout"
     CONTENT_FILTERED = "provider.content_filtered"
+    REFUSED = "provider.refused"
     INVALID_REQUEST = "provider.invalid_request"
     UNAVAILABLE = "provider.unavailable"
 
@@ -66,7 +67,6 @@ class ProviderConfig:
         if self.embedding_dimensions is not None and self.embedding_dimensions <= 0:
             raise ValueError("provider.embedding_dimensions must be positive")
 
-
 @dataclass(frozen=True, slots=True)
 class ResponseRequest:
     input: str | list[dict[str, Any]]
@@ -77,12 +77,18 @@ class ResponseRequest:
     schema_version: Literal["v1"] = SCHEMA_VERSION
     trace_id: str = ""
 
+    def __post_init__(self) -> None:
+        if self.schema_version != SCHEMA_VERSION:
+            raise ValueError(f"unsupported provider schema version: {self.schema_version}")
+
 
 class ProviderOutput(ContractModel):
     """Normalized output item; upstream response dictionaries do not cross the boundary."""
 
     schema_version: Literal["v1"] = SCHEMA_VERSION
     type: str
+    id: str | None = None
+    call_id: str | None = None
     text: str | None = None
     name: str | None = None
     arguments: str | None = None
@@ -170,6 +176,12 @@ def _failure(trace_id: str, code: ProviderErrorCode, message: str, *, retryable:
 def _dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
+def _validate_request(request: ResponseRequest, trace_id: str) -> None:
+    if request.schema_version != SCHEMA_VERSION:
+        raise _failure(trace_id, ProviderErrorCode.INVALID_REQUEST, "unsupported provider schema version", retryable=False)
+    if not trace_id or (request.trace_id and request.trace_id != trace_id):
+        raise _failure(trace_id or request.trace_id, ProviderErrorCode.INVALID_REQUEST, "provider trace_id conflict", retryable=False)
+
 
 class OpenAIResponsesProvider:
     """Minimal Responses-compatible adapter; only normalized contracts leave this class."""
@@ -235,6 +247,7 @@ class OpenAIResponsesProvider:
                 await client.aclose()
 
     async def responses(self, request: ResponseRequest, *, trace_id: str) -> ResponseResult:
+        _validate_request(request, trace_id)
         payload: dict[str, Any] = {"model": request.model or self.config.responses_model, "input": request.input}
         if request.instructions is not None:
             payload["instructions"] = request.instructions
@@ -248,6 +261,7 @@ class OpenAIResponsesProvider:
     async def stream_responses(
         self, request: ResponseRequest, *, trace_id: str
     ) -> AsyncIterator[StreamEvent]:
+        _validate_request(request, trace_id)
         payload: dict[str, Any] = {
             "model": request.model or self.config.responses_model,
             "input": request.input,
@@ -325,6 +339,8 @@ class OpenAIResponsesProvider:
             dimensions = len(vector)
             result.append(EmbeddingItem(index=expected_index, vector=vector))
         assert dimensions is not None
+        if self.config.embedding_dimensions is not None and dimensions != self.config.embedding_dimensions:
+            raise _failure(trace_id, ProviderErrorCode.UNAVAILABLE, "provider returned configured-incompatible embedding dimensions", retryable=True)
         return EmbeddingResult(
             trace_id=trace_id,
             model=str(value.get("model", self.config.embedding_model)),
@@ -348,8 +364,9 @@ async def _raise_for_status(response: httpx.Response, trace_id: str) -> None:
         raise _failure(trace_id, ProviderErrorCode.TIMEOUT, "provider request timed out", retryable=True)
     if response.status_code == 422:
         try:
+            await response.aread()
             body = response.json()
-        except ValueError:
+        except (ValueError, httpx.HTTPError):
             body = {}
         error = _dict(body.get("error")) if isinstance(body, dict) else {}
         marker = f"{error.get('code', '')} {error.get('type', '')}".lower()
@@ -383,6 +400,8 @@ def _parse_response(value: dict[str, Any], *, trace_id: str) -> ResponseResult:
     output_items = value.get("output")
     if not isinstance(output_items, list):
         raise _failure(trace_id, ProviderErrorCode.UNAVAILABLE, "provider returned an invalid response", retryable=True)
+    if _contains_refusal(output_items):
+        raise _failure(trace_id, ProviderErrorCode.REFUSED, "provider refused the request", retryable=False)
     output: list[ProviderOutput] = []
     tool_calls: list[ToolCallResult] = []
     citations: list[str] = []
@@ -393,16 +412,30 @@ def _parse_response(value: dict[str, Any], *, trace_id: str) -> ResponseResult:
         output.append(normalized)
         citations.extend(normalized.annotations)
         if normalized.type in {"function_call", "tool_call"} and normalized.name is not None and normalized.arguments is not None:
-            tool_calls.append(ToolCallResult(id=str(item.get("call_id", item.get("id", ""))), name=normalized.name, arguments=normalized.arguments))
+            tool_calls.append(ToolCallResult(id=normalized.call_id or normalized.id or "", name=normalized.name, arguments=normalized.arguments))
+    output_text = value.get("output_text")
+    if not isinstance(output_text, str) or not output_text:
+        output_text = _extract_text(output)
     return ResponseResult(
         trace_id=trace_id,
         id=str(value.get("id", "")),
-        output_text=str(value.get("output_text", _extract_text(output))),
+        output_text=output_text,
         output=output,
         usage=_dict(value.get("usage")),
         tool_calls=tool_calls,
         citations=citations,
     )
+
+
+def _contains_refusal(items: list[Any]) -> bool:
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "refusal":
+            return True
+        if any(isinstance(content, dict) and content.get("type") == "refusal" for content in item.get("content", [])):
+            return True
+    return False
 
 
 def _normalize_output_item(item: dict[str, Any]) -> ProviderOutput:
@@ -418,17 +451,28 @@ def _normalize_output_item(item: dict[str, Any]) -> ProviderOutput:
             annotations.append(annotation["url"])
     return ProviderOutput(
         type=str(item.get("type", "unknown")),
-        text=str(item["text"]) if isinstance(item.get("text"), str) else None,
+        id=str(item["id"]) if isinstance(item.get("id"), str) else None,
+        call_id=str(item["call_id"]) if isinstance(item.get("call_id"), str) else None,
+        text=_extract_item_text(item),
         name=str(item["name"]) if isinstance(item.get("name"), str) else None,
         arguments=str(item["arguments"]) if isinstance(item.get("arguments"), str) else None,
         annotations=annotations,
     )
 
 
+def _extract_item_text(item: dict[str, Any]) -> str | None:
+    if isinstance(item.get("text"), str):
+        return item["text"]
+    parts = [content["text"] for content in item.get("content", []) if isinstance(content, dict) and isinstance(content.get("text"), str)]
+    return "".join(parts) or None
+
+
 def _parse_stream_event(data: dict[str, Any], *, trace_id: str) -> StreamEvent | None:
     event_type = str(data.get("type", "message"))
     delta = data.get("delta") if isinstance(data.get("delta"), str) else None
     output = data.get("item")
+    if isinstance(output, dict) and _contains_refusal([output]):
+        raise _failure(trace_id, ProviderErrorCode.REFUSED, "provider refused the request", retryable=False)
     normalized = _normalize_output_item(output) if isinstance(output, dict) else None
     if event_type in {"response.completed", "response.created", "response.in_progress"} and delta is None and normalized is None:
         return None
