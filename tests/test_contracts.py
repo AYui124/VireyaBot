@@ -38,6 +38,29 @@ def user_private_context(user_id: str = "42") -> AccessContext:
     )
 
 
+@pytest.mark.parametrize(
+    ("content_type", "valid"),
+    [
+        ("image/png", True),
+        ("image/svg+xml", True),
+        ("image/png/extra", False),
+        ("image/;", False),
+    ],
+)
+def test_media_ref_accepts_mime_tokens_without_parameters(content_type: str, valid: bool) -> None:
+    payload = {
+        "schema_version": "v1",
+        "id": "media-1",
+        "content_type": content_type,
+        "size_bytes": 128,
+        "sha256": "a" * 64,
+    }
+    if valid:
+        ImageSegment(schema_version="v1", type="image", media=payload)
+    else:
+        with pytest.raises(ValueError):
+            ImageSegment(schema_version="v1", type="image", media=payload)
+
 def test_qq_image_walkthrough_accepts_private_media_and_scope() -> None:
     message = MessageEnvelope.model_validate(
         {

@@ -325,7 +325,7 @@
           "type": "string"
         },
         "content_type": {
-          "pattern": "^[^/\\s]+/[^\\s]+$",
+          "pattern": "^[!#$%&'*+\\-.^_`|~0-9A-Za-z]+/[!#$%&'*+\\-.^_`|~0-9A-Za-z]+$",
           "title": "Content Type",
           "type": "string"
         },
