@@ -24,7 +24,8 @@ docker compose ps
 - 普通设置和秘密设置均写入 PostgreSQL；秘密使用 Fernet 加密，API 只返回遮盖值。
 - `config/defaults.yaml` 只提供首次初始化的非秘密默认值。
 - `GET /health/live` 是进程存活检查；`GET /health/ready` 执行数据库连接检查。
-- `/api/login`、`/api/logout`、`/api/settings` 提供 JSON 管理接口，根路径提供最小 Web 配置页。
+- `/api/login`、`/api/logout`、`/api/settings` 提供 JSON 管理接口；`/snowluma` 与 `/api/snowluma` 提供独立的 SnowLuma / OneBot v11 配置入口。
+- SnowLuma 支持 `reverse_ws`、`forward_ws` 和 `http` 三种模式。服务端只接受与模式匹配的地址，保存不会触发连接验证；Token 保留或替换时均不回传明文。
 
 ## 设计原则
 
