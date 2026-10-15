@@ -5,6 +5,7 @@ import httpx
 import websockets
 
 from app.integrations.onebot import (
+    OneBotEvent,
     OneBotProtocolError,
     SnowLumaConfig,
     SnowLumaGateway,
@@ -107,3 +108,20 @@ async def _exercise_forward_gateway() -> None:
         await gateway.stop()
 
     assert not gateway.connected
+
+def test_onebot_synthetic_event_exposes_raw_boundary_fields() -> None:
+    private = OneBotEvent(
+        post_type="message",
+        raw={"message_type": "private", "user_id": 42, "message": [{"type": "text", "data": {"text": "hi"}}]},
+    )
+    group = OneBotEvent(
+        post_type="message",
+        raw={"message_type": "group", "user_id": 42, "group_id": 7, "message": []},
+    )
+    assert private.message_type == "private"
+    assert private.user_id == 42
+    assert private.group_id is None
+    assert private.segments[0]["type"] == "text"
+    assert group.message_type == "group"
+    assert group.group_id == 7
+    # Conversion to MessageEnvelope is intentionally a separate target boundary.

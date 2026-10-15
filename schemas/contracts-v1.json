@@ -181,6 +181,110 @@
       "title": "DataScopeKind",
       "type": "string"
     },
+    "ExecutionContext": {
+      "additionalProperties": false,
+      "description": "Engine-supplied context pinned for one component invocation.",
+      "properties": {
+        "schema_version": {
+          "const": "v1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "actor": {
+          "$ref": "#/$defs/Principal"
+        },
+        "conversation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConversationRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "scope": {
+          "$ref": "#/$defs/DataScope"
+        },
+        "workflow_version_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Workflow Version Id",
+          "type": "string"
+        },
+        "component_ref": {
+          "pattern": "^[a-z][a-z0-9_.-]{1,63}@0\\.[0-9]+\\.[0-9]+/[a-zA-Z][a-zA-Z0-9_.-]{0,63}$",
+          "title": "Component Ref",
+          "type": "string"
+        },
+        "capabilities": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Capabilities",
+          "type": "array"
+        }
+      },
+      "required": [
+        "schema_version",
+        "actor",
+        "scope",
+        "workflow_version_id",
+        "component_ref"
+      ],
+      "title": "ExecutionContext",
+      "type": "object"
+    },
+    "Failure": {
+      "additionalProperties": false,
+      "description": "Safe, machine-readable failure shared by runner-facing contracts.",
+      "properties": {
+        "schema_version": {
+          "const": "v1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "trace_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Trace Id",
+          "type": "string"
+        },
+        "error_code": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Error Code",
+          "type": "string"
+        },
+        "retryable": {
+          "title": "Retryable",
+          "type": "boolean"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message"
+        }
+      },
+      "required": [
+        "schema_version",
+        "trace_id",
+        "error_code",
+        "retryable"
+      ],
+      "title": "Failure",
+      "type": "object"
+    },
     "ImageSegment": {
       "additionalProperties": false,
       "properties": {
@@ -221,7 +325,7 @@
           "type": "string"
         },
         "content_type": {
-          "pattern": "^[^/\\\\s]+/[^/\\\\s]+$",
+          "pattern": "^[^/\\s]+/[^\\s]+$",
           "title": "Content Type",
           "type": "string"
         },
@@ -418,12 +522,16 @@
         },
         "value": {
           "title": "Value"
+        },
+        "context": {
+          "$ref": "#/$defs/ExecutionContext"
         }
       },
       "required": [
         "schema_version",
         "name",
-        "value"
+        "value",
+        "context"
       ],
       "title": "NodeInput",
       "type": "object"
@@ -479,6 +587,12 @@
           "title": "Node Id",
           "type": "string"
         },
+        "trace_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Trace Id",
+          "type": "string"
+        },
         "status": {
           "enum": [
             "queued",
@@ -504,23 +618,23 @@
           "title": "Output",
           "type": "array"
         },
-        "error_code": {
+        "failure": {
           "anyOf": [
             {
-              "type": "string"
+              "$ref": "#/$defs/Failure"
             },
             {
               "type": "null"
             }
           ],
-          "default": null,
-          "title": "Error Code"
+          "default": null
         }
       },
       "required": [
         "schema_version",
         "run_id",
         "node_id",
+        "trace_id",
         "status"
       ],
       "title": "NodeRun",
@@ -564,8 +678,7 @@
           "type": "string"
         },
         "id": {
-          "maxLength": 160,
-          "minLength": 1,
+          "pattern": "^[a-zA-Z][a-zA-Z0-9_.-]{0,63}$",
           "title": "Id",
           "type": "string"
         },
@@ -575,14 +688,12 @@
           "type": "string"
         },
         "input_schema_ref": {
-          "maxLength": 300,
-          "minLength": 1,
+          "pattern": "^urn:vireyabot:[a-z][a-z0-9_.-]{1,63}:v1$",
           "title": "Input Schema Ref",
           "type": "string"
         },
         "output_schema_ref": {
-          "maxLength": 300,
-          "minLength": 1,
+          "pattern": "^urn:vireyabot:[a-z][a-z0-9_.-]{1,63}:v1$",
           "title": "Output Schema Ref",
           "type": "string"
         }
@@ -694,6 +805,66 @@
       ],
       "title": "PrincipalKind",
       "type": "string"
+    },
+    "ProactivePolicy": {
+      "additionalProperties": false,
+      "description": "Persisted policy snapshot required before a scheduled private send.",
+      "properties": {
+        "schema_version": {
+          "const": "v1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "enabled": {
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "kill_switch": {
+          "title": "Kill Switch",
+          "type": "boolean"
+        },
+        "target_user_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Target User Id",
+          "type": "string"
+        },
+        "workflow_version_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Workflow Version Id",
+          "type": "string"
+        },
+        "quiet_hours": {
+          "default": false,
+          "title": "Quiet Hours",
+          "type": "boolean"
+        },
+        "cooldown_active": {
+          "default": false,
+          "title": "Cooldown Active",
+          "type": "boolean"
+        },
+        "frequency_limit_hit": {
+          "default": false,
+          "title": "Frequency Limit Hit",
+          "type": "boolean"
+        },
+        "explicit_authorization": {
+          "title": "Explicit Authorization",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "schema_version",
+        "enabled",
+        "kill_switch",
+        "target_user_id",
+        "workflow_version_id",
+        "explicit_authorization"
+      ],
+      "title": "ProactivePolicy",
+      "type": "object"
     },
     "ReplySegment": {
       "additionalProperties": false,
@@ -876,6 +1047,12 @@
           "title": "Call Id",
           "type": "string"
         },
+        "trace_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Trace Id",
+          "type": "string"
+        },
         "ok": {
           "title": "Ok",
           "type": "boolean"
@@ -885,27 +1062,22 @@
           "title": "Output",
           "type": "object"
         },
-        "error_code": {
+        "failure": {
           "anyOf": [
             {
-              "type": "string"
+              "$ref": "#/$defs/Failure"
             },
             {
               "type": "null"
             }
           ],
-          "default": null,
-          "title": "Error Code"
-        },
-        "retryable": {
-          "default": false,
-          "title": "Retryable",
-          "type": "boolean"
+          "default": null
         }
       },
       "required": [
         "schema_version",
         "call_id",
+        "trace_id",
         "ok"
       ],
       "title": "ToolResult",
@@ -1026,8 +1198,7 @@
           "type": "string"
         },
         "component_ref": {
-          "maxLength": 300,
-          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_.-]{1,63}@0\\.[0-9]+\\.[0-9]+/[a-zA-Z][a-zA-Z0-9_.-]{0,63}$",
           "title": "Component Ref",
           "type": "string"
         },
@@ -1289,6 +1460,17 @@
       "anyOf": [
         {
           "$ref": "#/$defs/NodeRun"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "proactive_policy": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ProactivePolicy"
         },
         {
           "type": "null"
