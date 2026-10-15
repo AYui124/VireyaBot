@@ -37,14 +37,15 @@ graph TD
     WORKER[后台 Worker] -->|策略检查| WF
 ```
 
-所有跨边界对象带 `schema_version: "v1"`。当前 Gateway 的公开事件仍是 `OneBotEvent(post_type, raw)`；`raw` 只能停留在 Gateway。目标转换器尚未实现，后续实现必须只按本节映射构造 `MessageEnvelope`，不得把 raw 传入 Core。媒体 `source_url` 是不可信输入，下载必须经过类型、大小、超时、重定向和地址限制。
+所有跨边界对象带 `schema_version: "v1"`。当前 Gateway 的公开事件仍是 `OneBotEvent(post_type, raw)`；`raw` 只能停留在 Gateway。目标转换器尚未实现，后续实现必须只按本节映射构造 `MessageEnvelope`，不得把 raw 传入 Core。媒体 `source_url` 是不可信输入，目标下载策略必须检查类型、大小、超时、重定向和地址限制。
 
 ## 3. 统一对象、所有权与锁定引用
 
 契约实现位于 `app/contracts.py`，生成的 JSON Schema 位于 `schemas/contracts-v1.json`。所有模型拒绝未知字段（`extra=forbid`）。Python 自定义校验（scope 组合、状态条件、边引用和策略顺序）不能由 JSON Schema 自动等价表达；两者必须分别验证。
 
 - `MessageEnvelope`：Gateway 创建，Core 消费；`ConversationRef` 明确 private 或 group。
-- `MediaRef`：只验证 MIME 语法、大小和摘要。`image/svg+xml` 是语法有效类型，但 `is_download_permitted_media_type` 的 Gateway 下载 allowlist 不包含 SVG；格式接受不等于允许下载。
+- `MediaRef`：只验证无参数 MIME token 语法、大小和摘要。`image/svg+xml` 是语法有效类型，但 `is_download_permitted_media_type` 只是目标下载白名单契约，当前 `SnowLumaGateway.fetch_media` 尚未调用它，运行时实际接受响应 `Content-Type` 为 `image/*` 的媒体（包括 SVG），并另行检查大小；格式接受不等于目标策略允许下载。
+- 接入责任：后续媒体下载实现必须在 Gateway 的响应类型检查处调用该白名单并补齐拒绝样例；在该接入和验收完成前，不得把白名单描述为当前安全措施。
 - `SessionRef`：Core 拥有生命周期，并固定 `persona_version_id`。
 - `ToolCall`/`ToolResult`：Core 生成调用，组件/Provider 返回；失败使用统一 `Failure(trace_id, error_code, retryable, message)`。
 - `MemoryRecord`：Core/记忆存储拥有；`DataScope` 是强制隔离键。

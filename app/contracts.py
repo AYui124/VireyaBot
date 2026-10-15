@@ -115,8 +115,8 @@ class ExecutionContext(ContractModel):
 
 class MediaRef(ContractModel):
     id: str = Field(min_length=1, max_length=160)
-    # Syntax acceptance is separate from the Gateway's download allowlist.
-    content_type: str = Field(pattern=r"^[^/\s]+/[^\s]+$")
+    # Syntax acceptance is separate from the Gateway's download policy; MIME has no parameters.
+    content_type: str = Field(pattern=r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+/[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
     size_bytes: int = Field(ge=0, le=10 * 1024 * 1024)
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     source_url: str | None = None
