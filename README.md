@@ -57,6 +57,10 @@ React 单页管理控制台使用仓库内锁定的 React、TypeScript、Tailwin
 
 协议仿真验证入口：`uv run pytest -q tests/test_onebot.py`。该测试使用本地 WebSocket 仿真，不代表真实 SnowLuma/QQ 验收；真实联调仍需用户在页面保存参数、授权并指定私聊对象和群。
 
+## Provider 协议边界
+
+Responses、多模态、流式事件、结构化输出、工具调用、可选原生 Web Search 和批量 Embedding 通过 `app.providers.ModelProvider` 统一；Provider 失败映射为带 trace 的稳定 `Failure`。接口支持矩阵、配置字段、脱敏证据和真实参数缺口见 [`docs/provider-validation-v1.md`](docs/provider-validation-v1.md)。当前测试使用本地 HTTP 仿真，不将仿真结果描述为真实 Provider 验收。
+
 ### NoneBot2 兼容性结论
 
 已在隔离环境验证 `nonebot2==2.5.0` 与 `nonebot-adapter-onebot` 可导入。该官方适配器要求由 NoneBot `ASGIMixin`/WebSocket driver 托管连接：反向入口固定为 `/onebot/v11/ws`（并要求 `X-Self-ID`），HTTP action 使用 `{api_root}/{action}`，正向 WebSocket 通过 `onebot_ws_urls` 连接。当前 FastAPI 配置页的地址是外部实例地址，且应用尚未托管 NoneBot driver 生命周期；因此本任务不把 NoneBot 运行时嵌入核心，也不冒充已采用官方适配器。当前网关复用相同的 OneBot action/echo/Auth 线格式，作为后续正式 NoneBot driver 接入前的可重复隔离验证边界。
