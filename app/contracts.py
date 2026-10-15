@@ -1,7 +1,8 @@
 """Versioned cross-boundary contracts for the first workflow/plugin slice.
 
-These models define data ownership and validation only. They do not execute
-workflows, invoke plugins, call providers, or send messages.
+These models are deliberately transport-neutral. They define ownership,
+version pinning, capability grants, and safe failure semantics without
+implementing a workflow engine or plugin runner.
 """
 
 from __future__ import annotations
@@ -27,6 +28,15 @@ class ContractAccessError(ValueError):
     def __init__(self, code: str, message: str) -> None:
         self.code = code
         super().__init__(message)
+
+
+class Failure(ContractModel):
+    """Safe, machine-readable failure shared by runner-facing contracts."""
+
+    trace_id: str = Field(min_length=1, max_length=160)
+    error_code: str = Field(min_length=1, max_length=160)
+    retryable: bool
+    message: str | None = Field(default=None, max_length=500)
 
 
 class PrincipalKind(StrEnum):
@@ -83,12 +93,42 @@ class DataScope(ContractModel):
         return self
 
 
+class AccessContext(ContractModel):
+    """Trusted identity and current conversation supplied by the caller."""
+
+    actor: Principal
+    conversation: ConversationRef | None = None
+
+
+class ExecutionContext(ContractModel):
+    """Engine-supplied context pinned for one component invocation."""
+
+    actor: Principal
+    conversation: ConversationRef | None = None
+    scope: DataScope
+    workflow_version_id: str = Field(min_length=1, max_length=160)
+    component_ref: str = Field(
+        pattern=r"^[a-z][a-z0-9_.-]{1,63}@0\.[0-9]+\.[0-9]+/[a-zA-Z][a-zA-Z0-9_.-]{0,63}$"
+    )
+    capabilities: list[str] = Field(default_factory=list, max_length=32)
+
+
 class MediaRef(ContractModel):
     id: str = Field(min_length=1, max_length=160)
-    content_type: str = Field(pattern=r"^[^/\\s]+/[^/\\s]+$")
+    # Syntax acceptance is separate from the Gateway's download allowlist.
+    content_type: str = Field(pattern=r"^[^/\s]+/[^\s]+$")
     size_bytes: int = Field(ge=0, le=10 * 1024 * 1024)
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     source_url: str | None = None
+
+
+DOWNLOADABLE_MEDIA_TYPES = frozenset({"image/gif", "image/jpeg", "image/png", "image/webp"})
+
+
+def is_download_permitted_media_type(content_type: str) -> bool:
+    """Return whether Gateway policy permits downloading this valid MIME type."""
+
+    return content_type.lower() in DOWNLOADABLE_MEDIA_TYPES
 
 
 class TextSegment(ContractModel):
@@ -144,17 +184,17 @@ class ToolCall(ContractModel):
 
 class ToolResult(ContractModel):
     call_id: str = Field(min_length=1, max_length=160)
+    trace_id: str = Field(min_length=1, max_length=160)
     ok: bool
     output: dict[str, Any] = Field(default_factory=dict)
-    error_code: str | None = None
-    retryable: bool = False
+    failure: Failure | None = None
 
     @model_validator(mode="after")
-    def validate_error(self) -> ToolResult:
-        if not self.ok and not self.error_code:
-            raise ValueError("failed tool result requires error_code")
-        if self.ok and self.error_code:
-            raise ValueError("successful tool result cannot have error_code")
+    def validate_failure(self) -> ToolResult:
+        if self.ok and self.failure:
+            raise ValueError("successful tool result cannot have failure")
+        if not self.ok and not self.failure:
+            raise ValueError("failed tool result requires failure")
         return self
 
 
@@ -169,6 +209,7 @@ class MemoryRecord(ContractModel):
 class NodeInput(ContractModel):
     name: str = Field(min_length=1, max_length=160)
     value: Any
+    context: ExecutionContext
 
 
 class NodeOutput(ContractModel):
@@ -186,10 +227,10 @@ class PluginPermission(StrEnum):
 
 
 class PluginComponent(ContractModel):
-    id: str = Field(min_length=1, max_length=160)
+    id: str = Field(pattern=r"^[a-zA-Z][a-zA-Z0-9_.-]{0,63}$")
     kind: Literal["workflow_node"]
-    input_schema_ref: str = Field(min_length=1, max_length=300)
-    output_schema_ref: str = Field(min_length=1, max_length=300)
+    input_schema_ref: str = Field(pattern=r"^urn:vireyabot:[a-z][a-z0-9_.-]{1,63}:v1$")
+    output_schema_ref: str = Field(pattern=r"^urn:vireyabot:[a-z][a-z0-9_.-]{1,63}:v1$")
 
 
 class PluginManifest(ContractModel):
@@ -202,7 +243,9 @@ class PluginManifest(ContractModel):
 
 class WorkflowNode(ContractModel):
     id: str = Field(pattern=r"^[a-zA-Z][a-zA-Z0-9_-]{0,63}$")
-    component_ref: str = Field(min_length=1, max_length=300)
+    component_ref: str = Field(
+        pattern=r"^[a-z][a-z0-9_.-]{1,63}@0\.[0-9]+\.[0-9]+/[a-zA-Z][a-zA-Z0-9_.-]{0,63}$"
+    )
     config: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -250,10 +293,50 @@ class WorkflowRun(ContractModel):
 class NodeRun(ContractModel):
     run_id: str = Field(min_length=1, max_length=160)
     node_id: str = Field(min_length=1, max_length=64)
+    trace_id: str = Field(min_length=1, max_length=160)
     status: Literal["queued", "running", "succeeded", "failed", "skipped"]
     input: list[NodeInput] = Field(default_factory=list)
     output: list[NodeOutput] = Field(default_factory=list)
-    error_code: str | None = None
+    failure: Failure | None = None
+
+    @model_validator(mode="after")
+    def validate_failure(self) -> NodeRun:
+        if self.status == "failed" and not self.failure:
+            raise ValueError("failed node run requires failure")
+        if self.status != "failed" and self.failure:
+            raise ValueError("only failed node runs can have failure")
+        return self
+
+
+class ProactivePolicy(ContractModel):
+    """Persisted policy snapshot required before a scheduled private send."""
+
+    enabled: bool
+    kill_switch: bool
+    target_user_id: str = Field(min_length=1, max_length=160)
+    workflow_version_id: str = Field(min_length=1, max_length=160)
+    quiet_hours: bool = False
+    cooldown_active: bool = False
+    frequency_limit_hit: bool = False
+    explicit_authorization: bool
+
+
+class ProactiveDecision(StrEnum):
+    ALLOWED = "allowed"
+    SKIPPED = "skipped"
+    DENIED = "denied"
+
+
+def evaluate_proactive_policy(policy: ProactivePolicy) -> ProactiveDecision:
+    """Evaluate only persisted policy inputs; no message is sent here."""
+
+    if not policy.enabled or policy.kill_switch:
+        return ProactiveDecision.SKIPPED
+    if not policy.explicit_authorization:
+        return ProactiveDecision.DENIED
+    if policy.quiet_hours or policy.cooldown_active or policy.frequency_limit_hit:
+        return ProactiveDecision.SKIPPED
+    return ProactiveDecision.ALLOWED
 
 
 class SecretRef(ContractModel):
@@ -288,20 +371,44 @@ class ContractCatalog(ContractModel):
     workflow_version: WorkflowVersion | None = None
     workflow_run: WorkflowRun | None = None
     node_run: NodeRun | None = None
+    proactive_policy: ProactivePolicy | None = None
     secret_ref: SecretRef | None = None
     audit_record: AuditRecord | None = None
 
 
-def assert_scope_access(scope: DataScope, *, actor_user_id: str | None, group_id: str | None) -> None:
-    """Enforce the only permitted access to user/group-owned data.
+def assert_scope_access(scope: DataScope, *, context: AccessContext) -> None:
+    """Require a trusted actor and matching current conversation scope.
 
-    Global data is reserved for system-owned resources; callers must pass an
-    explicit system actor by using ``actor_user_id=None`` and ``group_id=None``.
+    ``None`` is not an authenticated system identity. Global resources require
+    an explicit system principal and no conversation. Private resources require
+    the same user in a private conversation; group resources require the same
+    group in a group conversation.
     """
 
-    if scope.kind is DataScopeKind.PRIVATE and scope.user_id != actor_user_id:
-        raise ContractAccessError("scope.private_forbidden", "private resource belongs to another user")
-    if scope.kind is DataScopeKind.GROUP and scope.group_id != group_id:
-        raise ContractAccessError("scope.group_forbidden", "group resource belongs to another group")
-    if scope.kind is DataScopeKind.GLOBAL and (actor_user_id is not None or group_id is not None):
-        raise ContractAccessError("scope.global_forbidden", "global resource requires a system context")
+    actor = context.actor
+    conversation = context.conversation
+    if scope.kind is DataScopeKind.GLOBAL:
+        if actor.kind is not PrincipalKind.SYSTEM or conversation is not None:
+            raise ContractAccessError("scope.global_forbidden", "global resource requires explicit system context")
+        return
+
+    if actor.kind is not PrincipalKind.USER:
+        code = "scope.private_forbidden" if scope.kind is DataScopeKind.PRIVATE else "scope.group_forbidden"
+        raise ContractAccessError(code, "resource requires an authenticated user context")
+
+    if scope.kind is DataScopeKind.PRIVATE:
+        if (
+            actor.id != scope.user_id
+            or conversation is None
+            or conversation.kind is not ConversationKind.PRIVATE
+            or conversation.user_id != scope.user_id
+        ):
+            raise ContractAccessError("scope.private_forbidden", "private resource is outside the current conversation")
+        return
+
+    if (
+        conversation is None
+        or conversation.kind is not ConversationKind.GROUP
+        or conversation.group_id != scope.group_id
+    ):
+        raise ContractAccessError("scope.group_forbidden", "group resource is outside the current conversation")

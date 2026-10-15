@@ -49,8 +49,11 @@ React 单页管理控制台使用仓库内锁定的 React、TypeScript、Tailwin
 - `forward_ws`：VireyaBot 使用 Bearer Token 主动连接并在断线后指数退避重连。
 - `reverse_ws`：VireyaBot 监听配置地址，握手必须携带匹配的 Bearer Token；SnowLuma 可重新连接。
 - `http`：只支持 OneBot action 请求，不提供事件接收或断线恢复语义。
-- `next_event()` 只返回结构化 `OneBotEvent`；原始载荷停留在网关边界。`call()` 使用唯一 `echo` 关联并返回 `OneBotResponse`。
+- `next_event()` 当前只返回结构化 `OneBotEvent`；`raw` 停留在网关边界，尚未自动转换为 `MessageEnvelope`。目标字段映射、拒绝条件和合成事件验收见架构契约文档。
+- `call()` 使用唯一 `echo` 关联并返回 `OneBotResponse`；`status != ok` 或非零 `retcode` 不得伪造成功。
 - 支持 `get_login_info`、`get_image`、`send_private_msg`、`send_group_msg` 等标准 action；消息段原样保存在事件边界内，媒体读取拒绝重定向、私网地址、非图片类型和超限响应。
+
+契约文档同时固定了 private/group/global scope 的可信主体检查、Runner 的 `ExecutionContext`、统一 `Failure` 以及定时主动私聊的 kill switch、quiet hours、cooldown、频限和明确授权前置策略。文档中的主动私聊仅为契约走查，不代表已实现真实发送。
 
 协议仿真验证入口：`uv run pytest -q tests/test_onebot.py`。该测试使用本地 WebSocket 仿真，不代表真实 SnowLuma/QQ 验收；真实联调仍需用户在页面保存参数、授权并指定私聊对象和群。
 
@@ -60,11 +63,12 @@ React 单页管理控制台使用仓库内锁定的 React、TypeScript、Tailwin
 
 ## 设计原则
 
-- QQ 协议层与 Agent 核心解耦；
+- QQ 协议层与 Agent 核心解耦；当前 OneBot raw 不越过 Gateway；
 - PostgreSQL 作为持久化事实来源；
 - 人格、记忆、工作流和插件全部版本化并可追踪；
 - 默认保护用户数据与密钥；
 - 自定义插件在核心进程之外运行；
+- 主动消息必须经过明确授权和全局/时间/频率策略；
 - 优先交付可验证的完整用户流程，避免提前建设无使用证据的基础设施。
 - 插件、工作流、统一消息和数据隔离的首期契约见 [`docs/architecture-contract-v1.md`](docs/architecture-contract-v1.md)，对应 JSON Schema 为 [`schemas/contracts-v1.json`](schemas/contracts-v1.json)。
 
