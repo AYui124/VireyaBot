@@ -97,6 +97,25 @@ async def read_snowluma_settings(session: AsyncSession) -> dict[str, object]:
             result[key] = json.loads(row.value)
     return result
 
+async def read_snowluma_runtime_settings(session: AsyncSession) -> dict[str, object]:
+    """Read SnowLuma settings for the gateway without exposing secrets to API callers."""
+    rows = (await session.scalars(select(Setting).where(Setting.key.in_(SNOWLUMA_KEYS)))).all()
+    result: dict[str, object] = {
+        "connection_mode": "forward_ws",
+        "websocket_url": "",
+        "http_url": "",
+        "token": "",
+        "token_configured": False,
+    }
+    for row in rows:
+        key = row.key.removeprefix("snowluma.")
+        if row.is_secret:
+            result["token"] = decrypt(row.value)
+            result["token_configured"] = bool(result["token"])
+        else:
+            result[key] = json.loads(row.value)
+    return result
+
 
 async def save_settings(session: AsyncSession, values: Mapping[str, object], username: str) -> None:
     rows: dict[str, Setting] = {}
