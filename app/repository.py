@@ -77,16 +77,36 @@ def _validate_snowluma(values: Mapping[str, object]) -> None:
             raise ValueError("snowluma.websocket_url must be empty in HTTP mode")
 
 
+def _legacy_secret_value(stored: str) -> str:
+    try:
+        value = json.loads(stored)
+    except json.JSONDecodeError:
+        return stored
+    return value if isinstance(value, str) else stored
+
+
+def _repair_secret_row(row: Setting) -> None:
+    if row.is_secret:
+        return
+    row.value = encrypt(_legacy_secret_value(row.value))
+    row.is_secret = True
+
+
 async def bootstrap(session: AsyncSession) -> None:
     admin = await session.scalar(select(Admin).where(Admin.username == settings.admin_username))
     if admin is None:
         session.add(Admin(username=settings.admin_username, password_hash=hash_password(settings.admin_password)))
-    defaults = {**DEFAULT_VALUES, **{key: (value, False) for key, value in _flatten(settings.defaults).items()}}
+    defaults = dict(DEFAULT_VALUES)
+    for key, value in _flatten(settings.defaults).items():
+        if key not in SECRET_KEYS:
+            defaults[key] = (value, False)
     for key, (value, is_secret) in defaults.items():
         existing = await session.scalar(select(Setting).where(Setting.key == key))
         if existing is None:
             stored = encrypt(str(value)) if is_secret else json.dumps(value)
             session.add(Setting(key=key, value=stored, is_secret=is_secret))
+        elif is_secret:
+            _repair_secret_row(existing)
     await session.commit()
 
 
@@ -99,7 +119,7 @@ async def read_settings(session: AsyncSession) -> dict[str, object]:
     rows = (await session.scalars(select(Setting).order_by(Setting.key))).all()
     result = {}
     for row in rows:
-        result[row.key] = MASKED_SECRET if row.is_secret else json.loads(row.value)
+        result[row.key] = MASKED_SECRET if row.is_secret or row.key in SECRET_KEYS else json.loads(row.value)
     return result
 
 
@@ -108,7 +128,9 @@ async def read_snowluma_settings(session: AsyncSession) -> dict[str, object]:
     result: dict[str, object] = {"connection_mode": "forward_ws", "websocket_url": "", "http_url": "", "token": "", "token_configured": False}
     for row in rows:
         key = row.key.removeprefix("snowluma.")
-        if row.is_secret:
+        if row.is_secret or row.key in SECRET_KEYS:
+            if not row.is_secret:
+                _repair_secret_row(row)
             result["token_configured"] = bool(decrypt(row.value))
             result["token"] = MASKED_SECRET if result["token_configured"] else ""
         else:
@@ -127,8 +149,8 @@ async def read_snowluma_runtime_settings(session: AsyncSession) -> dict[str, obj
     }
     for row in rows:
         key = row.key.removeprefix("snowluma.")
-        if row.is_secret:
-            result["token"] = decrypt(row.value)
+        if row.is_secret or row.key in SECRET_KEYS:
+            result["token"] = decrypt(row.value) if row.is_secret else _legacy_secret_value(row.value)
             result["token_configured"] = bool(result["token"])
         else:
             result[key] = json.loads(row.value)
@@ -149,6 +171,8 @@ async def read_provider_runtime_settings(session: AsyncSession) -> dict[str, obj
     }
     for row in rows:
         key = row.key.removeprefix("provider.")
+        if row.key in SECRET_KEYS and not row.is_secret:
+            _repair_secret_row(row)
         result[key] = decrypt(row.value) if row.is_secret else json.loads(row.value)
     return result
 
@@ -172,6 +196,8 @@ async def save_settings(session: AsyncSession, values: Mapping[str, object], use
 
     for key, value in values.items():
         row = rows[key]
+        if key in SECRET_KEYS:
+            _repair_secret_row(row)
         if row.is_secret and (value is None or value == MASKED_SECRET or value == ""):
             continue
         if key in {"features.proactive_enabled", "provider.native_search_enabled"} and not isinstance(value, bool):

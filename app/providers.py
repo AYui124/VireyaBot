@@ -1,21 +1,20 @@
-"""Provider boundary for Responses-compatible models, search, and embeddings.
-
-The core talks to this module through typed requests and results. Upstream JSON is
-never exposed as a contract object, and provider failures are mapped to stable
-codes without copying response bodies into logs or error messages.
-"""
+"""Provider boundary for Responses-compatible models, search, and embeddings."""
 
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 import httpx
+from pydantic import Field
 
-from app.contracts import Failure
+from app.contracts import ContractModel, Failure
+
+SCHEMA_VERSION = "v1"
 
 
 class ProviderCapability(StrEnum):
@@ -27,6 +26,14 @@ class ProviderCapability(StrEnum):
     NATIVE_WEB_SEARCH = "native_web_search"
     EMBEDDING = "embedding"
     EMBEDDING_BATCH = "embedding_batch"
+
+
+class ProviderCapabilityStatus(ContractModel):
+    schema_version: Literal["v1"] = SCHEMA_VERSION
+    capability: ProviderCapability
+    adapter_supported: bool
+    endpoint_verified: bool
+    enabled: bool
 
 
 class ProviderErrorCode(StrEnum):
@@ -67,32 +74,56 @@ class ResponseRequest:
     model: str | None = None
     response_format: dict[str, Any] | None = None
     tools: list[dict[str, Any]] = field(default_factory=list)
+    schema_version: Literal["v1"] = SCHEMA_VERSION
+    trace_id: str = ""
 
 
-@dataclass(frozen=True, slots=True)
-class ResponseResult:
+class ProviderOutput(ContractModel):
+    """Normalized output item; upstream response dictionaries do not cross the boundary."""
+
+    schema_version: Literal["v1"] = SCHEMA_VERSION
+    type: str
+    text: str | None = None
+    name: str | None = None
+    arguments: str | None = None
+    annotations: list[str] = Field(default_factory=list)
+
+
+class ToolCallResult(ContractModel):
+    schema_version: Literal["v1"] = SCHEMA_VERSION
+    id: str
+    name: str
+    arguments: str
+
+
+class ResponseResult(ContractModel):
+    schema_version: Literal["v1"] = SCHEMA_VERSION
+    trace_id: str
     id: str
     output_text: str
-    output: list[dict[str, Any]]
+    output: list[ProviderOutput]
     usage: dict[str, Any]
-    tool_calls: list[dict[str, Any]] = field(default_factory=list)
-    citations: list[str] = field(default_factory=list)
+    tool_calls: list[ToolCallResult] = Field(default_factory=list)
+    citations: list[str] = Field(default_factory=list)
 
 
-@dataclass(frozen=True, slots=True)
-class StreamEvent:
+class StreamEvent(ContractModel):
+    schema_version: Literal["v1"] = SCHEMA_VERSION
+    trace_id: str
     event_type: str
-    data: dict[str, Any]
+    delta: str | None = None
+    output: ProviderOutput | None = None
 
 
-@dataclass(frozen=True, slots=True)
-class EmbeddingItem:
+class EmbeddingItem(ContractModel):
+    schema_version: Literal["v1"] = SCHEMA_VERSION
     index: int
     vector: list[float]
 
 
-@dataclass(frozen=True, slots=True)
-class EmbeddingResult:
+class EmbeddingResult(ContractModel):
+    schema_version: Literal["v1"] = SCHEMA_VERSION
+    trace_id: str
     model: str
     data: list[EmbeddingItem]
     dimensions: int
@@ -119,6 +150,7 @@ class ModelProvider(Protocol):
     async def embeddings(self, inputs: list[str], *, trace_id: str) -> EmbeddingResult: ...
 
 
+
 class SearchProvider(Protocol):
     async def search(self, query: str, *, trace_id: str) -> ResponseResult: ...
 
@@ -126,7 +158,7 @@ class SearchProvider(Protocol):
 def _failure(trace_id: str, code: ProviderErrorCode, message: str, *, retryable: bool) -> ProviderFailure:
     return ProviderFailure(
         Failure(
-            schema_version="v1",
+            schema_version=SCHEMA_VERSION,
             trace_id=trace_id,
             error_code=code,
             retryable=retryable,
@@ -135,8 +167,12 @@ def _failure(trace_id: str, code: ProviderErrorCode, message: str, *, retryable:
     )
 
 
+def _dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
 class OpenAIResponsesProvider:
-    """Minimal Responses-compatible adapter; no provider-specific fields cross it."""
+    """Minimal Responses-compatible adapter; only normalized contracts leave this class."""
 
     capabilities = frozenset(
         {
@@ -156,9 +192,20 @@ class OpenAIResponsesProvider:
         self._owns_client = client is None
         if config.native_search_enabled:
             self.capabilities = self.capabilities | {ProviderCapability.NATIVE_WEB_SEARCH}
+    def capability_matrix(self) -> list[ProviderCapabilityStatus]:
+        return [
+            ProviderCapabilityStatus(
+                capability=capability,
+                adapter_supported=capability in self.capabilities,
+                endpoint_verified=False,
+                enabled=capability in self.capabilities and (capability != ProviderCapability.NATIVE_WEB_SEARCH or self.config.native_search_enabled),
+            )
+            for capability in ProviderCapability
+        ]
 
     def _headers(self) -> dict[str, str]:
-        headers = {"Authorization": f"Bearer {self.config.api_key}"}
+        headers = {"Authorization": f"Bearer {self.config.api_key}"
+        }
         if self.config.organization:
             headers["OpenAI-Organization"] = self.config.organization
         return headers
@@ -175,18 +222,7 @@ class OpenAIResponsesProvider:
                 raise _failure(trace_id, ProviderErrorCode.TIMEOUT, "provider request timed out", retryable=True) from exc
             except httpx.HTTPError as exc:
                 raise _failure(trace_id, ProviderErrorCode.UNAVAILABLE, "provider transport unavailable", retryable=True) from exc
-            if response.status_code in {401, 403}:
-                raise _failure(trace_id, ProviderErrorCode.AUTHENTICATION, "provider authentication failed", retryable=False)
-            if response.status_code == 429:
-                raise _failure(trace_id, ProviderErrorCode.RATE_LIMITED, "provider rate limit reached", retryable=True)
-            if response.status_code in {408, 504}:
-                raise _failure(trace_id, ProviderErrorCode.TIMEOUT, "provider request timed out", retryable=True)
-            if response.status_code == 400:
-                raise _failure(trace_id, ProviderErrorCode.INVALID_REQUEST, "provider rejected the request", retryable=False)
-            if response.status_code == 422:
-                raise _failure(trace_id, ProviderErrorCode.CONTENT_FILTERED, "provider filtered the content", retryable=False)
-            if response.is_error:
-                raise _failure(trace_id, ProviderErrorCode.UNAVAILABLE, "provider returned an error", retryable=True)
+            await _raise_for_status(response, trace_id)
             try:
                 value = response.json()
             except ValueError as exc:
@@ -207,7 +243,7 @@ class OpenAIResponsesProvider:
         if request.tools:
             payload["tools"] = request.tools
         value = await self._request("POST", "/responses", payload, trace_id=trace_id)
-        return _parse_response(value)
+        return _parse_response(value, trace_id=trace_id)
 
     async def stream_responses(
         self, request: ResponseRequest, *, trace_id: str
@@ -224,6 +260,7 @@ class OpenAIResponsesProvider:
         if request.tools:
             payload["tools"] = request.tools
         client = self._client or httpx.AsyncClient(timeout=self.config.timeout_seconds)
+        completed = False
         try:
             try:
                 async with client.stream("POST", self._url("/responses"), headers=self._headers(), json=payload) as response:
@@ -231,20 +268,34 @@ class OpenAIResponsesProvider:
                     async for line in response.aiter_lines():
                         if not line or line.startswith(":"):
                             continue
-                        if line.startswith("data:"):
-                            raw = line[5:].strip()
-                            if raw == "[DONE]":
-                                return
-                            try:
-                                data = json.loads(raw)
-                            except json.JSONDecodeError as exc:
-                                raise _failure(trace_id, ProviderErrorCode.UNAVAILABLE, "provider returned invalid stream data", retryable=True) from exc
-                            if isinstance(data, dict):
-                                yield StreamEvent(str(data.get("type", "message")), data)
+                        if not line.startswith("data:"):
+                            continue
+                        raw = line[5:].strip()
+                        if raw == "[DONE]":
+                            break
+                        try:
+                            data = json.loads(raw)
+                        except json.JSONDecodeError as exc:
+                            raise _failure(trace_id, ProviderErrorCode.UNAVAILABLE, "provider returned invalid stream data", retryable=True) from exc
+                        if not isinstance(data, dict):
+                            raise _failure(trace_id, ProviderErrorCode.UNAVAILABLE, "provider returned invalid stream data", retryable=True)
+                        event_type = str(data.get("type", "message"))
+                        if event_type in {"response.failed", "response.error", "error", "response.incomplete"}:
+                            raise _failure_from_event(trace_id, event_type, data)
+                        if event_type == "response.completed":
+                            response_data = _dict(data.get("response"))
+                            if response_data.get("status") not in {None, "completed"}:
+                                raise _failure_from_status(trace_id, response_data.get("status"), response_data.get("error"))
+                            completed = True
+                        event = _parse_stream_event(data, trace_id=trace_id)
+                        if event is not None:
+                            yield event
             except httpx.TimeoutException as exc:
                 raise _failure(trace_id, ProviderErrorCode.TIMEOUT, "provider request timed out", retryable=True) from exc
             except httpx.HTTPError as exc:
                 raise _failure(trace_id, ProviderErrorCode.UNAVAILABLE, "provider transport unavailable", retryable=True) from exc
+            if not completed:
+                raise _failure(trace_id, ProviderErrorCode.UNAVAILABLE, "provider stream ended unexpectedly", retryable=True)
         finally:
             if self._owns_client:
                 await client.aclose()
@@ -257,21 +308,35 @@ class OpenAIResponsesProvider:
             payload["dimensions"] = self.config.embedding_dimensions
         value = await self._request("POST", "/embeddings", payload, trace_id=trace_id)
         items = value.get("data")
-        if not isinstance(items, list):
-            raise _failure(trace_id, ProviderErrorCode.UNAVAILABLE, "provider returned invalid embeddings", retryable=True)
+        if not isinstance(items, list) or len(items) != len(inputs):
+            raise _failure(trace_id, ProviderErrorCode.UNAVAILABLE, "provider returned mismatched embeddings", retryable=True)
         result: list[EmbeddingItem] = []
-        for item in items:
-            if not isinstance(item, dict) or not isinstance(item.get("embedding"), list):
+        dimensions: int | None = None
+        for expected_index, item in enumerate(items):
+            if not isinstance(item, dict) or item.get("index") != expected_index or not isinstance(item.get("embedding"), list):
                 raise _failure(trace_id, ProviderErrorCode.UNAVAILABLE, "provider returned invalid embeddings", retryable=True)
-            result.append(EmbeddingItem(int(item.get("index", len(result))), [float(x) for x in item["embedding"]]))
-        dimensions = len(result[0].vector) if result else 0
-        return EmbeddingResult(str(value.get("model", self.config.embedding_model)), result, dimensions, _dict(value.get("usage")))
+            vector: list[float] = []
+            for value_item in item["embedding"]:
+                if isinstance(value_item, bool) or not isinstance(value_item, (int, float)) or not math.isfinite(value_item):
+                    raise _failure(trace_id, ProviderErrorCode.UNAVAILABLE, "provider returned invalid embeddings", retryable=True)
+                vector.append(float(value_item))
+            if not vector or (dimensions is not None and len(vector) != dimensions):
+                raise _failure(trace_id, ProviderErrorCode.UNAVAILABLE, "provider returned inconsistent embedding dimensions", retryable=True)
+            dimensions = len(vector)
+            result.append(EmbeddingItem(index=expected_index, vector=vector))
+        assert dimensions is not None
+        return EmbeddingResult(
+            trace_id=trace_id,
+            model=str(value.get("model", self.config.embedding_model)),
+            data=result,
+            dimensions=dimensions,
+            usage=_dict(value.get("usage")),
+        )
 
     async def search(self, query: str, *, trace_id: str) -> ResponseResult:
         if not self.config.native_search_enabled:
             raise _failure(trace_id, ProviderErrorCode.UNAVAILABLE, "native web search is not enabled", retryable=False)
-        request = ResponseRequest(input=query, tools=[{"type": "web_search_preview"}])
-        return await self.responses(request, trace_id=trace_id)
+        return await self.responses(ResponseRequest(input=query, tools=[{"type": "web_search_preview"}]), trace_id=trace_id)
 
 
 async def _raise_for_status(response: httpx.Response, trace_id: str) -> None:
@@ -281,50 +346,97 @@ async def _raise_for_status(response: httpx.Response, trace_id: str) -> None:
         raise _failure(trace_id, ProviderErrorCode.RATE_LIMITED, "provider rate limit reached", retryable=True)
     if response.status_code in {408, 504}:
         raise _failure(trace_id, ProviderErrorCode.TIMEOUT, "provider request timed out", retryable=True)
+    if response.status_code == 422:
+        try:
+            body = response.json()
+        except ValueError:
+            body = {}
+        error = _dict(body.get("error")) if isinstance(body, dict) else {}
+        marker = f"{error.get('code', '')} {error.get('type', '')}".lower()
+        if any(term in marker for term in ("content", "safety", "filter")):
+            raise _failure(trace_id, ProviderErrorCode.CONTENT_FILTERED, "provider filtered the content", retryable=False)
+        raise _failure(trace_id, ProviderErrorCode.INVALID_REQUEST, "provider rejected the request", retryable=False)
     if response.status_code == 400:
         raise _failure(trace_id, ProviderErrorCode.INVALID_REQUEST, "provider rejected the request", retryable=False)
-    if response.status_code == 422:
-        raise _failure(trace_id, ProviderErrorCode.CONTENT_FILTERED, "provider filtered the content", retryable=False)
     if response.is_error:
         raise _failure(trace_id, ProviderErrorCode.UNAVAILABLE, "provider returned an error", retryable=True)
 
 
+def _failure_from_status(trace_id: str, status: Any, error: Any) -> ProviderFailure:
+    marker = json.dumps(error, ensure_ascii=False).lower() if isinstance(error, (dict, list, str)) else ""
+    if any(term in marker for term in ("content", "safety", "filter")):
+        return _failure(trace_id, ProviderErrorCode.CONTENT_FILTERED, "provider filtered the content", retryable=False)
+    if status in {"failed", "error", "cancelled", "incomplete"}:
+        return _failure(trace_id, ProviderErrorCode.UNAVAILABLE, "provider response did not complete", retryable=False)
+    return _failure(trace_id, ProviderErrorCode.UNAVAILABLE, "provider returned an invalid response", retryable=True)
 
 
-def _dict(value: Any) -> dict[str, Any]:
-    return value if isinstance(value, dict) else {}
+def _failure_from_event(trace_id: str, event_type: str, data: dict[str, Any]) -> ProviderFailure:
+    response = _dict(data.get("response"))
+    return _failure_from_status(trace_id, response.get("status", event_type), response.get("error", data.get("error")))
 
 
-def _parse_response(value: dict[str, Any]) -> ResponseResult:
-    output = value.get("output")
-    output_items = output if isinstance(output, list) else []
-    tool_calls = [item for item in output_items if isinstance(item, dict) and item.get("type") in {"function_call", "tool_call"}]
+def _parse_response(value: dict[str, Any], *, trace_id: str) -> ResponseResult:
+    status = value.get("status")
+    if status != "completed":
+        raise _failure_from_status(trace_id, status, value.get("error"))
+    output_items = value.get("output")
+    if not isinstance(output_items, list):
+        raise _failure(trace_id, ProviderErrorCode.UNAVAILABLE, "provider returned an invalid response", retryable=True)
+    output: list[ProviderOutput] = []
+    tool_calls: list[ToolCallResult] = []
     citations: list[str] = []
     for item in output_items:
         if not isinstance(item, dict):
-            continue
-        for annotation in item.get("annotations", []):
-            if isinstance(annotation, dict) and isinstance(annotation.get("url"), str):
-                citations.append(annotation["url"])
+            raise _failure(trace_id, ProviderErrorCode.UNAVAILABLE, "provider returned an invalid response", retryable=True)
+        normalized = _normalize_output_item(item)
+        output.append(normalized)
+        citations.extend(normalized.annotations)
+        if normalized.type in {"function_call", "tool_call"} and normalized.name is not None and normalized.arguments is not None:
+            tool_calls.append(ToolCallResult(id=str(item.get("call_id", item.get("id", ""))), name=normalized.name, arguments=normalized.arguments))
     return ResponseResult(
+        trace_id=trace_id,
         id=str(value.get("id", "")),
-        output_text=str(value.get("output_text", _extract_text(output_items))),
-        output=[item for item in output_items if isinstance(item, dict)],
+        output_text=str(value.get("output_text", _extract_text(output))),
+        output=output,
         usage=_dict(value.get("usage")),
         tool_calls=tool_calls,
         citations=citations,
     )
 
 
-def _extract_text(items: list[Any]) -> str:
-    parts: list[str] = []
-    for item in items:
-        if not isinstance(item, dict):
+def _normalize_output_item(item: dict[str, Any]) -> ProviderOutput:
+    annotations: list[str] = []
+    for content in item.get("content", []):
+        if not isinstance(content, dict):
             continue
-        for content in item.get("content", []):
-            if isinstance(content, dict) and isinstance(content.get("text"), str):
-                parts.append(content["text"])
-    return "".join(parts)
+        for annotation in content.get("annotations", []):
+            if isinstance(annotation, dict) and annotation.get("type") == "url_citation" and isinstance(annotation.get("url"), str):
+                annotations.append(annotation["url"])
+    for annotation in item.get("annotations", []):
+        if isinstance(annotation, dict) and annotation.get("type") == "url_citation" and isinstance(annotation.get("url"), str):
+            annotations.append(annotation["url"])
+    return ProviderOutput(
+        type=str(item.get("type", "unknown")),
+        text=str(item["text"]) if isinstance(item.get("text"), str) else None,
+        name=str(item["name"]) if isinstance(item.get("name"), str) else None,
+        arguments=str(item["arguments"]) if isinstance(item.get("arguments"), str) else None,
+        annotations=annotations,
+    )
+
+
+def _parse_stream_event(data: dict[str, Any], *, trace_id: str) -> StreamEvent | None:
+    event_type = str(data.get("type", "message"))
+    delta = data.get("delta") if isinstance(data.get("delta"), str) else None
+    output = data.get("item")
+    normalized = _normalize_output_item(output) if isinstance(output, dict) else None
+    if event_type in {"response.completed", "response.created", "response.in_progress"} and delta is None and normalized is None:
+        return None
+    return StreamEvent(schema_version=SCHEMA_VERSION, trace_id=trace_id, event_type=event_type, delta=delta, output=normalized)
+
+
+def _extract_text(items: list[ProviderOutput]) -> str:
+    return "".join(item.text for item in items if item.text is not None)
 
 
 def redact_provider_payload(value: Any) -> Any:
