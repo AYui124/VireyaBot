@@ -66,6 +66,7 @@ React 单页管理控制台使用仓库内锁定的 React、TypeScript、Tailwin
 - 默认保护用户数据与密钥；
 - 自定义插件在核心进程之外运行；
 - 优先交付可验证的完整用户流程，避免提前建设无使用证据的基础设施。
+- 插件、工作流、统一消息和数据隔离的首期契约见 [`docs/architecture-contract-v1.md`](docs/architecture-contract-v1.md)，对应 JSON Schema 为 [`schemas/contracts-v1.json`](schemas/contracts-v1.json)。
 
 ## 许可证
 
