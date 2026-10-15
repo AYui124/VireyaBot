@@ -51,9 +51,12 @@ VireyaBot is a Python AI agent platform centered on QQ through SnowLuma / OneBot
 - Run Python commands through `uv run` unless the command executes inside a project Docker image.
 - Do not use global `pip install`, `pipx inject`, Poetry global environments, Conda base, or system package mutation for project dependencies.
 - Frontend dependencies must remain repository-local through the selected package manager. Never use global npm package installation for project tooling.
-- Deployment and integration verification must use Docker Compose on the available local Docker daemon. Host-only startup is useful for focused development but does not prove deployability.
-- Docker verification must build the project's images, start the declared services, apply database migrations, exercise health checks and the changed user path, then stop the stack without deleting unrelated volumes or containers.
-- Use project-scoped Compose names, networks, volumes, ports, and environment files. Never operate on Docker resources that were not created for VireyaBot.
+- NEVER run `docker compose` from `/opt/projects/VireyaBot` or any task worktree. Worktree-local Compose projects leave containers tied to disposable paths and are not valid deployment verification.
+- Build application images explicitly with `docker build` from a verified commit or task worktree and tag them with an immutable revision identifier.
+- The persistent runtime is owned by `/opt/VireyaBot/docker-compose.yml` and `/opt/VireyaBot/.env`, outside the Git repository. Its Compose file references a prebuilt image and must not contain `build:` or bind mounts to repository/worktree files.
+- All long-lived Compose commands must use `/opt/VireyaBot` as the project directory. Containers use `restart: unless-stopped`, bounded logs, and named persistent volumes so deleting a task worktree cannot break the runtime.
+- Routine task smoke tests may use `docker build` and disposable `docker run --rm` containers. They must not stop, recreate, or remove the persistent runtime unless the task explicitly owns a deployment update.
+- A deployment update builds a new revision-tagged image, updates `/opt/VireyaBot/docker-compose.yml`, runs Compose from `/opt/VireyaBot` with `--no-build --wait`, verifies health and persistence, and leaves the service running.
 - Docker deployment tests cover VireyaBot and its owned dependencies only. SnowLuma remains external; use configurable WebSocket/HTTP endpoints and secrets supplied outside Git.
 - The first implementation milestone is a vertical framework slice: Web login and configuration, PostgreSQL persistence, encrypted secret settings, YAML/bootstrap configuration, migrations, and a verified Docker Compose deployment. SnowLuma, LLM, workflow, and plugin features build on this foundation.
 
