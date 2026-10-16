@@ -86,7 +86,7 @@ class ProviderUpdateRequest(BaseModel):
     enabled: bool | None = None
     api_key: str | None = None
     responses_model: str | None = Field(default=None, min_length=1, max_length=160)
-    embedding_model: str | None = Field(default=None, min_length=1, max_length=160)
+    embedding_model: str | None = Field(default=None, max_length=160)
     embedding_dimensions: int | None = Field(default=None, gt=0)
     native_search_enabled: bool | None = None
     default_stream: bool | None = None
