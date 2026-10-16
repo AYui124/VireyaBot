@@ -180,7 +180,12 @@ def _validate_provider_runtime_options(values: Mapping[str, object]) -> None:
         raise ValueError("temperature must be between 0 and 2")
     if not isinstance(headers, Mapping):
         raise TypeError("extra_headers must be an object")
+    normalized_headers: set[str] = set()
     for key, value in headers.items():
+        normalized = key.lower() if isinstance(key, str) else ""
+        if normalized in {"authorization", "host", "content-type", "content-length"} or normalized in normalized_headers or "\r" in str(key) or "\n" in str(key) or "\r" in str(value) or "\n" in str(value):
+            raise ValueError("extra_headers contains a forbidden or duplicate header")
+        normalized_headers.add(normalized)
         if not isinstance(key, str) or not key.strip() or len(key) > 160:
             raise ValueError("extra_headers contains an invalid header name")
         if not isinstance(value, str) or len(value) > 4096:
@@ -199,6 +204,11 @@ def _validate_provider_values(values: Mapping[str, object]) -> None:
         raise ValueError("base_url must be an absolute http(s) URL")
     if parsed_url.username is not None or parsed_url.password is not None:
         raise ValueError("base_url must not contain credentials")
+    if protocol_type == "anthropic_messages":
+        if values.get("organization"):
+            raise ValueError("organization is unsupported for anthropic_messages")
+        if values.get("temperature") is not None and values["temperature"] > 1:
+            raise ValueError("anthropic temperature must be between 0 and 1")
     if not isinstance(timeout_seconds, (int, float)) or isinstance(timeout_seconds, bool) or timeout_seconds <= 0 or timeout_seconds > 600:
         raise ValueError("timeout_seconds must be between 0 and 600")
     if dimensions is not None and (not isinstance(dimensions, int) or isinstance(dimensions, bool) or dimensions <= 0):
@@ -223,7 +233,10 @@ def _validate_provider_values(values: Mapping[str, object]) -> None:
 
 def _provider_public(provider: Provider, secret: ProviderSecret | None, model: ProviderModelConfig | None) -> dict[str, object]:
     anthropic = provider.protocol_type == "anthropic_messages"
-    configured_headers = bool(secret and secret.extra_headers)
+    try:
+        configured_headers = bool(json.loads(decrypt(secret.extra_headers) if secret and secret.extra_headers else "{}"))
+    except (TypeError, ValueError):
+        configured_headers = False
     return {
         "providerId": provider.provider_id,
         "name": provider.name,
