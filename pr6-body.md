@@ -4,23 +4,22 @@
 
 - 固定 Core、SnowLuma Gateway、Configuration Service、Plugin Registry/Runner、Workflow Engine、Web API 和 Worker 的边界。
 - 提供 v1 Pydantic 契约与 JSON Schema，覆盖统一消息、媒体、会话、人格、工具、记忆、插件、工作流、密钥和审计。
-- 补齐可信主体与当前 conversation 绑定的 private/group/global 数据隔离，以及 Engine → Runner 的锁定 `ExecutionContext`。
-- 统一 `Failure(trace_id, error_code, retryable, message)` 和失败状态约束。
 
-### PRIV-20：Provider 协议边界、返修与管理页面
+### PRIV-20：Provider 协议边界、官方 SDK 与管理页面
 
-- 支持 `openai_responses`、`openai_chat_completions`、`anthropic_messages` 三类协议，按稳定 `providerId` 精确选择，禁止猜测协议或跨 Provider 回退。
-- 三类协议提供非流式文本调用；三类流式调用提供增量文本、工具事件、用量和完成事件，并对截断、超时、取消和中途错误 fail closed。
-- Anthropic 保留输入/输出 token 用量和工具调用身份；Chat/Anthropic 不声明原生搜索，不发送 Responses 图片格式；Anthropic 不要求 Embedding 字段。
-- Provider API 统一清理 Pydantic 校验输入，非法秘密不会进入 422 响应、日志或审计路径；端点拒绝 URL userinfo，密钥加密、遮盖和留空保留。
-- Provider、通用设置和 SnowLuma 管理页补齐协议提示、未配置密钥状态、刷新/取消、重复提交保护和读取失败禁用保存。
-- 文档与迁移说明更新，新增多协议流式回归测试。
+- OpenAI Responses 与 Chat Completions 使用官方 `openai` Python SDK 的 `AsyncOpenAI`；Anthropic Messages 使用官方 `anthropic` Python SDK 的 `AsyncAnthropic`。
+- 使用 SDK 请求模型、异步流接口和异常类型；生产路径删除手写 HTTP 鉴权、响应解析和 SSE 分帧。VireyaBot 仅保留 `providerId` 配置注入、能力拒绝、统一契约归一化和脱敏错误边界。
+- 保留三类协议的非流式/流式文本、用量/完成、工具增量身份与完成、截断/超时/取消关闭、能力拒绝和 Provider 隔离回归。
+- 修复 SnowLuma 运行配置读取缺少返回值，验证非空配置可构造 Gateway。
+- 继续覆盖秘密校验脱敏、Provider/通用设置/SnowLuma 页面交互、迁移和旧配置兼容。
 
 ## 交付验证
 
-- 集成提交：`8901f9c`，已推送 `origin/dev`。
-- 任务修订提交：`be3b9e6`。
-- 35 项后端测试、Ruff、前端类型检查和构建通过。
-- 镜像：`vireyabot:test-priv20-be3b9e6`。
-- 隔离 PostgreSQL 空库迁移、应用健康检查、未认证 401、镜像重启后健康检查通过。
-- 真实外部 Provider 凭据未使用；真实服务验收仍需授权配置。
+- 官方 SDK 依赖已锁定在 `pyproject.toml` 与 `uv.lock`：`openai`、`anthropic`。
+- 集成 dev 提交：`19f6cf2`，已推送 `origin/dev`。
+- 后端 35 项测试与 Ruff 通过；前端类型检查和构建通过。
+- 官方 SDK MockTransport 协议测试通过；SDK 版本：openai 1.109.1、anthropic 0.125.0。
+- 镜像：`vireyabot:test-priv20-sdk-c782923`；镜像内 SDK import smoke、隔离 PostgreSQL 空库迁移、健康检查、未认证 401、重启后健康检查通过。
+- Docker 构建使用冻结 `uv.lock` 导出依赖并通过镜像源安装，避免运行时未安装官方 SDK。
+
+真实外部 Provider 凭据未使用；未合并 main、未更新长期实例、未操作外部 SnowLuma。
