@@ -12,39 +12,35 @@ Provider 只负责端点协议、鉴权头、超时和上游错误分类。可�
 
 ## 首期支持矩阵
 
-| 能力 | 接口/配置 | 当前证据 | 结论 |
+| 协议/能力 | 非流式 | 流式 | 能力边界 |
 | --- | --- | --- | --- |
-| 文本 Responses | `POST /responses` | 本地 HTTP 与 MockTransport 合成协议仿真 | 适配器已实现；端点仍待真实授权验证 |
-| 图片输入 | Responses `input_image` 内容项 | 有效 1×1 PNG data URL（PNG 签名 `iVBOR`）本地 HTTP 仿真 | 接口已实现；媒体下载白名单仍属 Gateway 契约 |
-| 标准正文 | `output[].content[].text` | 无顶层 `output_text` 的 `standard answer` 仿真 | 正文不会因缺少便利字段而丢失 |
-| 流式事件 | Responses SSE `data:` | 本地 HTTP `created`/tool item/delta/`completed`/`DONE` | 只返回带 schema/trace 的事件；failed、incomplete、异常截断和网络超时转稳定 Failure |
-| 结构化输出 | `ResponseRequest.response_format` → `text.format` | 合成请求断言 | 适配器已实现，不把 schema 扩散到核心 |
-| 工具调用往返 | `function_call` → `function_call_output` | 本地 HTTP/MockTransport 合成请求与响应，保留 `call_id` | 适配器已实现；工具权限仍由 Runner/Workflow 控制 |
-| 原生 Web Search | `provider.native_search_enabled`、`web_search_preview` | 合成请求与 `content[].annotations[].url_citation` 解析 | 可选；未启用时稳定返回 `provider.unavailable` |
-| Embedding | `POST /embeddings`，可选 `dimensions` | 合成批量输入与二维向量响应 | 批量数量、连续索引、统一维度、配置维度和有限数值均 fail closed |
-| 401/403 | `provider.auth_failed` | 隔离 HTTP 仿真 | 不可重试，保留 trace |
-| 429 | `provider.rate_limited` | 隔离 HTTP 仿真 | 可重试，保留 trace；未压测真实服务 |
-| 网络超时 | `provider.timeout` | MockTransport 实际抛出 `httpx.ReadTimeout` | 有界重试；不以 HTTP 504 冒充网络超时证据 |
-| 408/504 | `provider.timeout` | 隔离 HTTP 状态仿真 | 稳定分类，但与网络超时证据分开 |
-| 内容过滤/422 | `provider.content_filtered` | 仅上游 error code/type 含 content/safety/filter 时分类 | 其他 422 为 `provider.invalid_request`，不无条件等同过滤；流式 422 先读取 body 再分类 |
-| 拒绝 | `provider.refused` | completed + refusal 内容仿真 | 不作为空成功返回，保留 trace 且不暴露上游理由 |
+| `openai_responses` | `/responses` 文本、图片、结构化输出、工具、Embedding | Responses SSE 增量、用量、完成、失败/截断 | 原生搜索仅此协议且显式启用 |
+| `openai_chat_completions` | `/chat/completions` 文本、结构化输出、工具、Embedding | Chat SSE 增量、工具增量、用量、完成；无完成或 `[DONE]` 截断会失败 | 不接受 Responses `input_image`；不支持原生搜索 |
+| `anthropic_messages` | `/messages` 文本、工具 | Messages SSE 文本/工具增量、输入/输出用量、工具完成、完成；`message_stop` 缺失会失败 | 不声明 Embedding、图片、结构化输出或原生搜索 |
 
-能力声明通过 `capability_matrix()` 区分 `adapter_supported`、配置 `enabled` 和 `endpoint_verified`。本地仿真不会把端点标记为已验证；当前 `endpoint_verified` 全部为 false。
+三类协议都由 `build_provider(session, provider_id)` 按持久化协议字段选择，禁止根据 URL 猜测或跨 Provider 回退。流事件统一为 `StreamEvent`；用量事件先于完成事件。工具增量保留 `id`/`call_id`/名称，便于 Runner 继续处理。
+
+通用错误证据仍覆盖 401/403、429、408/504、网络超时、上游 422 分类、失败响应、异常截断和取消时上游连接关闭。真实端点未使用本任务凭据验证。
+
+能力声明通过 `capability_matrix()` 区分 `adapter_supported`、配置 `enabled` 和 `endpoint_verified`。Chat Completions 与 Anthropic 不会因 `native_search_enabled` 配置错误声明原生搜索；Anthropic 的 Embedding 字段对外返回空且管理 API 不要求填写。
 
 ## 配置字段
 
-| PostgreSQL key | 类型 | 秘密 |
+| PostgreSQL resource field | 类型 | 秘密/说明 |
 | --- | --- | --- |
-| `provider.base_url` | string | 否 |
-| `provider.api_key` | string | 是，Fernet 加密 |
-| `provider.responses_model` | string | 否 |
-| `provider.embedding_model` | string | 否 |
-| `provider.embedding_dimensions` | integer/null | 否；返回向量必须匹配 |
-| `provider.timeout_seconds` | number | 否 |
-| `provider.organization` | string | 否 |
-| `provider.native_search_enabled` | boolean | 否 |
+| `Provider.protocol_type` | enum | `openai_responses`、`openai_chat_completions` 或 `anthropic_messages` |
+| `Provider.base_url` | string | 否；禁止 URL userinfo |
+| `ProviderSecret.api_key` | string | 是，Fernet 加密，错误响应不回显 |
+| `ProviderModelConfig.responses_model` | string | 否；Anthropic Messages 模型字段 |
+| `ProviderModelConfig.embedding_model` | string | 否；Anthropic 不要求且对外返回空 |
+| `ProviderModelConfig.embedding_dimensions` | integer/null | 否；向量必须匹配 |
+| `Provider.timeout_seconds` | number | 否 |
+| `Provider.organization` | string | 否；OpenAI 兼容协议使用 |
+| `ProviderModelConfig.native_search_enabled` | boolean | 否；仅 Responses 适配器支持 |
 
-默认值仅在 PostgreSQL 首次初始化时写入；YAML 的 `provider.api_key` 永不覆盖秘密默认值；重启不会覆盖管理员保存值。管理员配置入口是已认证的 `PUT /api/settings`，当前通用设置页面尚未提供 Provider 专用表单，不能把页面未显示误称为已提供 UI 配置。
+迁移 `0001` 的旧单套 `provider.*` 配置时固定为 `openai_responses`，保留稳定默认 `providerId`、密钥关联和管理员配置；`0002_provider_resources` 删除旧设置行。重启不会用 YAML 覆盖 PostgreSQL 值。
+
+管理页 `/providers` 提供三类协议选择、字段按协议显示、切换提示、未配置/已配置密钥状态、留空保留、刷新和取消交互。通用设置与 SnowLuma 页面读取未完成或失败时禁用保存。
 
 ## 真实验证边界
 

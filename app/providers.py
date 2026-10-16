@@ -211,7 +211,7 @@ class OpenAIResponsesProvider:
         self.config = config
         self._client = client
         self._owns_client = client is None
-        if config.native_search_enabled:
+        if config.native_search_enabled and self.__class__ is OpenAIResponsesProvider:
             self.capabilities = self.capabilities | {ProviderCapability.NATIVE_WEB_SEARCH}
     def capability_matrix(self) -> list[ProviderCapabilityStatus]:
         return [
@@ -309,7 +309,12 @@ class OpenAIResponsesProvider:
                             response_data = _dict(data.get("response"))
                             if response_data.get("status") not in {None, "completed"}:
                                 raise _failure_from_status(trace_id, response_data.get("status"), response_data.get("error"))
+                            usage = response_data.get("usage", data.get("usage"))
+                            if isinstance(usage, dict):
+                                yield StreamEvent(trace_id=trace_id, event_type="usage", output=ProviderOutput(type="usage", text=json.dumps(usage)))
                             completed = True
+                            yield StreamEvent(trace_id=trace_id, event_type="response.completed")
+                            continue
                         event = _parse_stream_event(data, trace_id=trace_id)
                         if event is not None:
                             yield event
@@ -412,16 +417,26 @@ class OpenAIChatCompletionsProvider(OpenAIResponsesProvider):
 
     async def stream_responses(self, request: ResponseRequest, *, trace_id: str) -> AsyncIterator[StreamEvent]:
         _validate_request(request, trace_id)
+        if _has_image_input(request.input):
+            raise _failure(trace_id, ProviderErrorCode.INVALID_REQUEST, "image input is not supported by this Provider", retryable=False)
         payload: dict[str, Any] = {"model": request.model or self.config.responses_model, "messages": self._messages(request), "stream": True, "stream_options": {"include_usage": True}}
         if request.response_format is not None:
             payload["response_format"] = request.response_format
         if request.tools:
             payload["tools"] = request.tools
+        finished = False
+        done = False
+        usage_seen = False
         async for event in self._stream_sse("/chat/completions", payload, trace_id=trace_id):
+            if event.get("__stream_done__"):
+                done = True
+                continue
             choices = event.get("choices")
             if not isinstance(choices, list) or not choices:
-                if event.get("usage") is not None:
-                    yield StreamEvent(trace_id=trace_id, event_type="usage", output=ProviderOutput(type="usage", text=json.dumps(event["usage"])))
+                usage = event.get("usage")
+                if isinstance(usage, dict):
+                    usage_seen = True
+                    yield StreamEvent(trace_id=trace_id, event_type="usage", output=ProviderOutput(type="usage", text=json.dumps(usage)))
                 continue
             choice = _dict(choices[0])
             delta = _dict(choice.get("delta"))
@@ -434,8 +449,15 @@ class OpenAIChatCompletionsProvider(OpenAIResponsesProvider):
                     if isinstance(function.get("name"), str) or isinstance(function.get("arguments"), str):
                         yield StreamEvent(trace_id=trace_id, event_type="response.tool_call.delta", output=ProviderOutput(type="tool_call", id=str(call.get("id", "")), call_id=str(call.get("id", "")), name=function.get("name"), arguments=function.get("arguments")))
             if choice.get("finish_reason"):
-                yield StreamEvent(trace_id=trace_id, event_type="response.completed")
+                finished = True
+        if not done or not finished:
+            raise _failure(trace_id, ProviderErrorCode.UNAVAILABLE, "provider stream ended unexpectedly", retryable=True)
+        if not usage_seen:
+            yield StreamEvent(trace_id=trace_id, event_type="usage", output=ProviderOutput(type="usage", text="{}"))
+        yield StreamEvent(trace_id=trace_id, event_type="response.completed")
 
+    async def search(self, query: str, *, trace_id: str) -> ResponseResult:
+        raise _failure(trace_id, ProviderErrorCode.INVALID_REQUEST, "native web search is not supported by this Provider", retryable=False)
     async def _stream_sse(self, path: str, payload: Mapping[str, Any], *, trace_id: str) -> AsyncIterator[dict[str, Any]]:
         client = self._client or httpx.AsyncClient(timeout=self.config.timeout_seconds)
         try:
@@ -447,6 +469,7 @@ class OpenAIChatCompletionsProvider(OpenAIResponsesProvider):
                             continue
                         raw = line[5:].strip()
                         if raw == "[DONE]":
+                            yield {"__stream_done__": True}
                             return
                         try:
                             value = json.loads(raw)
@@ -454,7 +477,7 @@ class OpenAIChatCompletionsProvider(OpenAIResponsesProvider):
                             raise _failure(trace_id, ProviderErrorCode.UNAVAILABLE, "provider returned invalid stream data", retryable=True) from exc
                         if not isinstance(value, dict):
                             raise _failure(trace_id, ProviderErrorCode.UNAVAILABLE, "provider returned invalid stream data", retryable=True)
-                        if value.get("type") == "error":
+                        if value.get("type") == "error" or "error" in value:
                             raise _failure(trace_id, ProviderErrorCode.UNAVAILABLE, "provider stream returned an error", retryable=False)
                         yield value
             except httpx.TimeoutException as exc:
@@ -524,18 +547,47 @@ class AnthropicMessagesProvider(OpenAIChatCompletionsProvider):
             payload["system"] = system
         if request.tools:
             payload["tools"] = request.tools
+        usage: dict[str, Any] = {}
+        tools: dict[int, dict[str, str]] = {}
+        done = False
+        stopped = False
         async for data in self._stream_sse("/messages", payload, trace_id=trace_id):
+            if data.get("__stream_done__"):
+                done = True
+                continue
             event_type = data.get("type")
-            if event_type == "content_block_delta":
+            if event_type == "message_start":
+                message = _dict(data.get("message"))
+                start_usage = message.get("usage")
+                if isinstance(start_usage, dict):
+                    usage.update(start_usage)
+            elif event_type == "content_block_start":
+                block = _dict(data.get("content_block"))
+                if block.get("type") == "tool_use":
+                    index = int(data.get("index", len(tools)))
+                    tool_id = str(block.get("id", ""))
+                    tool_name = str(block.get("name", ""))
+                    tools[index] = {"id": tool_id, "name": tool_name, "arguments": ""}
+                    yield StreamEvent(trace_id=trace_id, event_type="response.tool_call.delta", output=ProviderOutput(type="tool_call", id=tool_id, call_id=tool_id, name=tool_name, arguments=""))
+            elif event_type == "content_block_delta":
                 delta = _dict(data.get("delta"))
                 if isinstance(delta.get("text"), str):
                     yield StreamEvent(trace_id=trace_id, event_type="response.output_text.delta", delta=delta["text"])
                 elif isinstance(delta.get("partial_json"), str):
-                    yield StreamEvent(trace_id=trace_id, event_type="response.tool_call.delta", delta=delta["partial_json"])
+                    index = int(data.get("index", 0))
+                    tool = tools.setdefault(index, {"id": "", "name": "", "arguments": ""})
+                    tool["arguments"] += delta["partial_json"]
+                    yield StreamEvent(trace_id=trace_id, event_type="response.tool_call.delta", output=ProviderOutput(type="tool_call", id=tool["id"], call_id=tool["id"], name=tool["name"] or None, arguments=delta["partial_json"]))
             elif event_type == "message_delta":
-                yield StreamEvent(trace_id=trace_id, event_type="usage", output=ProviderOutput(type="usage", text=json.dumps(_dict(data.get("usage")))))
+                usage.update(_dict(data.get("usage")))
             elif event_type == "message_stop":
-                yield StreamEvent(trace_id=trace_id, event_type="response.completed")
+                stopped = True
+        if not done or not stopped:
+            raise _failure(trace_id, ProviderErrorCode.UNAVAILABLE, "provider stream ended unexpectedly", retryable=True)
+        yield StreamEvent(trace_id=trace_id, event_type="usage", output=ProviderOutput(type="usage", text=json.dumps(usage)))
+        for tool in tools.values():
+            yield StreamEvent(trace_id=trace_id, event_type="response.tool_call.completed", output=ProviderOutput(type="tool_call", id=tool["id"], call_id=tool["id"], name=tool["name"] or None, arguments=tool["arguments"]))
+        yield StreamEvent(trace_id=trace_id, event_type="response.completed")
 
     async def embeddings(self, inputs: list[str], *, trace_id: str) -> EmbeddingResult:
         raise _failure(trace_id, ProviderErrorCode.INVALID_REQUEST, "embedding is not supported by this Provider", retryable=False)

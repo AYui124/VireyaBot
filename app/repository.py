@@ -183,9 +183,14 @@ def _validate_provider_values(values: Mapping[str, object]) -> None:
         raise ValueError("timeout_seconds must be between 0 and 600")
     if dimensions is not None and (not isinstance(dimensions, int) or isinstance(dimensions, bool) or dimensions <= 0):
         raise ValueError("embedding_dimensions must be a positive integer or null")
-    for key in ("name", "responses_model", "embedding_model"):
+    required_text = ("name", "responses_model")
+    if protocol_type != "anthropic_messages":
+        required_text = (*required_text, "embedding_model")
+    for key in required_text:
         if not isinstance(values.get(key), str) or not values[key].strip():
             raise ValueError(f"{key} must not be empty")
+    if protocol_type == "anthropic_messages" and values.get("native_search_enabled"):
+        raise ValueError("native_search_enabled is unsupported for anthropic_messages")
     if not isinstance(values.get("organization", ""), str):
         raise TypeError("organization must be a string")
     if not isinstance(values.get("enabled"), bool):
@@ -197,6 +202,7 @@ def _validate_provider_values(values: Mapping[str, object]) -> None:
 
 
 def _provider_public(provider: Provider, secret: ProviderSecret | None, model: ProviderModelConfig | None) -> dict[str, object]:
+    anthropic = provider.protocol_type == "anthropic_messages"
     return {
         "providerId": provider.provider_id,
         "name": provider.name,
@@ -207,9 +213,9 @@ def _provider_public(provider: Provider, secret: ProviderSecret | None, model: P
         "enabled": provider.enabled,
         "apiKeyConfigured": bool(secret and decrypt(secret.api_key)),
         "responsesModel": model.responses_model if model else "",
-        "embeddingModel": model.embedding_model if model else "",
-        "embeddingDimensions": model.embedding_dimensions if model else None,
-        "nativeSearchEnabled": bool(model and model.native_search_enabled),
+        "embeddingModel": "" if anthropic else (model.embedding_model if model else ""),
+        "embeddingDimensions": None if anthropic else (model.embedding_dimensions if model else None),
+        "nativeSearchEnabled": False if anthropic else bool(model and model.native_search_enabled),
     }
 
 
