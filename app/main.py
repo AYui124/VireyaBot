@@ -1,21 +1,22 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field, StrictStr
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import engine, get_session, session_factory
+from app.provider_settings import PROVIDER_PROTOCOLS, ProviderCreateRequest, ProviderUpdateRequest
 from app.repository import (
     authenticate,
     bootstrap,
     create_provider_config,
+    delete_provider_config,
     list_provider_configs,
     read_settings,
     read_snowluma_settings,
@@ -58,40 +59,6 @@ class SnowLumaRequest(BaseModel):
     token: str | None = None
 
 
-class ProviderCreateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    name: str = Field(min_length=1, max_length=120)
-    protocol_type: Literal["openai_responses", "openai_chat_completions", "anthropic_messages"] = "openai_responses"
-    base_url: str = Field(min_length=1, max_length=500)
-    timeout_seconds: float = Field(gt=0, le=600)
-    organization: str = Field(default="", max_length=160)
-    enabled: bool = True
-    api_key: str | None = None
-    responses_model: str = Field(min_length=1, max_length=160)
-    embedding_model: str = ""
-    embedding_dimensions: int | None = Field(default=None, gt=0)
-    native_search_enabled: bool = False
-    default_stream: bool = False
-    temperature: float | None = Field(default=None, ge=0, le=2)
-    max_output_tokens: int = Field(default=4096, ge=1, le=32768)
-    extra_headers: dict[str, StrictStr] = Field(default_factory=dict, max_length=32)
-
-
-class ProviderUpdateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    protocol_type: Literal["openai_responses", "openai_chat_completions", "anthropic_messages"] | None = None
-    base_url: str | None = Field(default=None, min_length=1, max_length=500)
-    timeout_seconds: float | None = Field(default=None, gt=0, le=600)
-    organization: str | None = Field(default=None, max_length=160)
-    enabled: bool | None = None
-    api_key: str | None = None
-    responses_model: str | None = Field(default=None, min_length=1, max_length=160)
-    embedding_model: str | None = Field(default=None, max_length=160)
-    embedding_dimensions: int | None = Field(default=None, gt=0)
-    native_search_enabled: bool | None = None
-    default_stream: bool | None = None
-    max_output_tokens: int | None = Field(default=None, ge=1, le=32768)
-    extra_headers: dict[str, StrictStr] | None = Field(default=None, max_length=32)
 
 
 def current_user(request: Request) -> str:
@@ -178,6 +145,11 @@ async def me(username: str = Depends(current_user)) -> dict[str, str]:
     return {"username": username}
 
 
+@app.get("/api/provider-protocols")
+async def get_provider_protocols(_: str = Depends(current_user)) -> dict[str, object]:
+    return PROVIDER_PROTOCOLS
+
+
 @app.get("/api/providers")
 async def get_providers(_: str = Depends(current_user), session: AsyncSession = Depends(get_session)) -> list[dict[str, object]]:
     return await list_provider_configs(session)
@@ -186,9 +158,9 @@ async def get_providers(_: str = Depends(current_user), session: AsyncSession = 
 @app.post("/api/providers")
 async def post_provider(payload: ProviderCreateRequest, username: str = Depends(current_user), session: AsyncSession = Depends(get_session)) -> dict[str, object]:
     try:
-        return await create_provider_config(session, payload.model_dump(), username)
+        return await create_provider_config(session, payload.model_dump(exclude_unset=True), username)
     except (TypeError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(status_code=422, detail=str(exc)) from None
 
 
 @app.put("/api/providers/{provider_id}")
@@ -197,7 +169,16 @@ async def put_provider(provider_id: str, payload: ProviderUpdateRequest, usernam
         return await update_provider_config(session, provider_id, payload.model_dump(exclude_unset=True), username)
     except (TypeError, ValueError) as exc:
         status_code = 404 if str(exc) == "Unknown providerId" else 422
-        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+        raise HTTPException(status_code=status_code, detail=str(exc)) from None
+
+
+@app.delete("/api/providers/{provider_id}")
+async def delete_provider(provider_id: str, username: str = Depends(current_user), session: AsyncSession = Depends(get_session)) -> dict[str, str]:
+    try:
+        await delete_provider_config(session, provider_id, username)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Unknown providerId") from None
+    return {"status": "deleted"}
 
 
 @app.get("/api/settings")
