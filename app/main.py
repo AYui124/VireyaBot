@@ -3,7 +3,8 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -35,6 +36,11 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="VireyaBot", version=settings.vireyabot_version, lifespan=lifespan)
 
+@app.exception_handler(RequestValidationError)
+async def validation_error_response(_: Request, exc: RequestValidationError) -> JSONResponse:
+    detail = [{"loc": list(error.get("loc", ())), "msg": error.get("msg", "Invalid request"), "type": error.get("type", "value_error")} for error in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": detail})
+
 
 class LoginRequest(BaseModel):
     username: str = Field(min_length=1)
@@ -54,26 +60,26 @@ class SnowLumaRequest(BaseModel):
 
 class ProviderCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
-    protocol_type: Literal["openai_responses"] = "openai_responses"
+    protocol_type: Literal["openai_responses", "openai_chat_completions", "anthropic_messages"] = "openai_responses"
     base_url: str = Field(min_length=1, max_length=500)
     timeout_seconds: float = Field(gt=0, le=600)
     organization: str = Field(default="", max_length=160)
     enabled: bool = True
-    api_key: str | None = Field(default=None, max_length=10_000)
+    api_key: str | None = None
     responses_model: str = Field(min_length=1, max_length=160)
-    embedding_model: str = Field(min_length=1, max_length=160)
+    embedding_model: str = ""
     embedding_dimensions: int | None = Field(default=None, gt=0)
     native_search_enabled: bool = False
 
 
 class ProviderUpdateRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
-    protocol_type: Literal["openai_responses"] | None = None
+    protocol_type: Literal["openai_responses", "openai_chat_completions", "anthropic_messages"] | None = None
     base_url: str | None = Field(default=None, min_length=1, max_length=500)
     timeout_seconds: float | None = Field(default=None, gt=0, le=600)
     organization: str | None = Field(default=None, max_length=160)
     enabled: bool | None = None
-    api_key: str | None = Field(default=None, max_length=10_000)
+    api_key: str | None = None
     responses_model: str | None = Field(default=None, min_length=1, max_length=160)
     embedding_model: str | None = Field(default=None, min_length=1, max_length=160)
     embedding_dimensions: int | None = Field(default=None, gt=0)

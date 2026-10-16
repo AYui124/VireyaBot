@@ -5,6 +5,8 @@ import httpx
 import pytest
 
 from app.providers import (
+    AnthropicMessagesProvider,
+    OpenAIChatCompletionsProvider,
     OpenAIResponsesProvider,
     ProviderCapability,
     ProviderConfig,
@@ -28,6 +30,10 @@ def _provider(handler, *, search=False, embedding_dimensions=None):
         ),
         client=client,
     ), client
+
+def _provider_for(provider_type, handler):
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return provider_type(ProviderConfig(base_url="https://provider.invalid/v1", api_key="synthetic-key", responses_model="synthetic-responses", embedding_model="synthetic-embedding"), client=client), client
 
 
 def test_responses_image_structured_tool_and_embedding_protocols() -> None:
@@ -280,3 +286,40 @@ def test_streaming_422_is_classified_without_response_not_read() -> None:
 def test_provider_evidence_redacts_credentials() -> None:
     payload = redact_provider_payload({"Authorization": "Bearer secret", "api_key": "secret", "nested": {"token": "secret"}, "value": "kept"})
     assert payload == {"Authorization": "[REDACTED]", "api_key": "[REDACTED]", "nested": {"token": "[REDACTED]"}, "value": "kept"}
+
+def test_chat_stream_requires_done_and_orders_usage_before_completion() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        body = b'data: {"choices":[{"delta":{"content":"A"}}]}\n\ndata: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: {"choices":[],"usage":{"prompt_tokens":2,"completion_tokens":1}}\n\ndata: [DONE]\n\n'
+        return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
+
+    async def run() -> None:
+        provider, client = _provider_for(OpenAIChatCompletionsProvider, handler)
+        try:
+            events = [event async for event in provider.stream_responses(ResponseRequest(input="hello"), trace_id="chat-stream")]
+            types = [event.event_type for event in events]
+            assert types.index("usage") < types.index("response.completed")
+            assert [event.delta for event in events if event.delta] == ["A"]
+        finally:
+            await client.aclose()
+
+    asyncio.run(run())
+
+
+def test_anthropic_stream_keeps_input_usage_and_tool_identity() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        body = b'data: {"type":"message_start","message":{"usage":{"input_tokens":3}}}\n\ndata: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"tool-1","name":"lookup"}}\n\ndata: {"type":"content_block_delta","index":1,"delta":{"partial_json":"{}"}}\n\ndata: {"type":"message_delta","usage":{"output_tokens":1}}\n\ndata: {"type":"message_stop"}\n\ndata: [DONE]\n\n'
+        return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
+
+    async def run() -> None:
+        provider, client = _provider_for(AnthropicMessagesProvider, handler)
+        try:
+            events = [event async for event in provider.stream_responses(ResponseRequest(input="hello"), trace_id="anthropic-stream")]
+            usage = next(event for event in events if event.event_type == "usage")
+            assert json.loads(usage.output.text) == {"input_tokens": 3, "output_tokens": 1}
+            completed = next(event for event in events if event.event_type == "response.tool_call.completed")
+            assert completed.output.call_id == "tool-1"
+            assert events[-1].event_type == "response.completed"
+        finally:
+            await client.aclose()
+
+    asyncio.run(run())

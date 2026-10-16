@@ -1,10 +1,11 @@
 export type Settings = Record<string, string | boolean | number | null>;
 export type SnowLumaSettings = { connection_mode: "reverse_ws" | "forward_ws" | "http"; websocket_url: string; http_url: string; token: string; token_configured: boolean };
 export type Status = { application: string; database: string; version: string; migration: string };
+export type ProtocolType = "openai_responses" | "openai_chat_completions" | "anthropic_messages";
 export type ProviderConfig = {
   providerId: string;
   name: string;
-  protocolType: "openai_responses";
+  protocolType: ProtocolType;
   baseUrl: string;
   timeoutSeconds: number;
   organization: string;

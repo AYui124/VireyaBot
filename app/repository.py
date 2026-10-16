@@ -157,31 +157,51 @@ async def read_snowluma_runtime_settings(session: AsyncSession) -> dict[str, obj
             result["token_configured"] = bool(result["token"])
         else:
             result[key] = json.loads(row.value)
-    return result
+
+def _validate_provider_secret(value: object) -> None:
+    if value is None:
+        return
+    if not isinstance(value, str):
+        raise TypeError("api_key must be a string")
+    if len(value) > 4096:
+        raise ValueError("api_key exceeds the maximum permitted length")
 
 def _validate_provider_values(values: Mapping[str, object]) -> None:
     protocol_type = values.get("protocol_type")
     base_url = values.get("base_url")
     timeout_seconds = values.get("timeout_seconds")
     dimensions = values.get("embedding_dimensions")
-    if protocol_type != "openai_responses":
-        raise ValueError("protocol_type must be openai_responses")
-    if not isinstance(base_url, str) or urlparse(base_url).scheme not in {"http", "https"} or not urlparse(base_url).netloc:
+    parsed_url = urlparse(base_url) if isinstance(base_url, str) else None
+    if protocol_type not in {"openai_responses", "openai_chat_completions", "anthropic_messages"}:
+        raise ValueError("protocol_type is unsupported")
+    if parsed_url is None or parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
         raise ValueError("base_url must be an absolute http(s) URL")
-    if not isinstance(timeout_seconds, (int, float)) or timeout_seconds <= 0 or timeout_seconds > 600:
+    if parsed_url.username is not None or parsed_url.password is not None:
+        raise ValueError("base_url must not contain credentials")
+    if not isinstance(timeout_seconds, (int, float)) or isinstance(timeout_seconds, bool) or timeout_seconds <= 0 or timeout_seconds > 600:
         raise ValueError("timeout_seconds must be between 0 and 600")
     if dimensions is not None and (not isinstance(dimensions, int) or isinstance(dimensions, bool) or dimensions <= 0):
         raise ValueError("embedding_dimensions must be a positive integer or null")
-    for key in ("name", "responses_model", "embedding_model"):
+    required_text = ("name", "responses_model")
+    if protocol_type != "anthropic_messages":
+        required_text = (*required_text, "embedding_model")
+    for key in required_text:
         if not isinstance(values.get(key), str) or not values[key].strip():
             raise ValueError(f"{key} must not be empty")
+    if protocol_type == "anthropic_messages" and values.get("native_search_enabled"):
+        raise ValueError("native_search_enabled is unsupported for anthropic_messages")
     if not isinstance(values.get("organization", ""), str):
         raise TypeError("organization must be a string")
     if not isinstance(values.get("enabled"), bool):
         raise TypeError("enabled must be boolean")
+    if not isinstance(values.get("native_search_enabled"), bool):
+        raise TypeError("native_search_enabled must be boolean")
+
+
 
 
 def _provider_public(provider: Provider, secret: ProviderSecret | None, model: ProviderModelConfig | None) -> dict[str, object]:
+    anthropic = provider.protocol_type == "anthropic_messages"
     return {
         "providerId": provider.provider_id,
         "name": provider.name,
@@ -192,9 +212,9 @@ def _provider_public(provider: Provider, secret: ProviderSecret | None, model: P
         "enabled": provider.enabled,
         "apiKeyConfigured": bool(secret and decrypt(secret.api_key)),
         "responsesModel": model.responses_model if model else "",
-        "embeddingModel": model.embedding_model if model else "",
-        "embeddingDimensions": model.embedding_dimensions if model else None,
-        "nativeSearchEnabled": bool(model and model.native_search_enabled),
+        "embeddingModel": "" if anthropic else (model.embedding_model if model else ""),
+        "embeddingDimensions": None if anthropic else (model.embedding_dimensions if model else None),
+        "nativeSearchEnabled": False if anthropic else bool(model and model.native_search_enabled),
     }
 
 
@@ -257,6 +277,7 @@ async def read_provider_runtime_settings(session: AsyncSession, provider_id: str
     if secret is None or model is None:
         raise ValueError("Provider configuration is incomplete")
     return {
+        "protocol_type": provider.protocol_type,
         "base_url": provider.base_url,
         "api_key": decrypt(secret.api_key),
         "responses_model": model.responses_model,
@@ -273,6 +294,7 @@ def _new_provider_id() -> str:
 
 
 async def create_provider_config(session: AsyncSession, values: Mapping[str, object], username: str) -> dict[str, object]:
+    _validate_provider_secret(values.get("api_key"))
     candidate = {"name": values.get("name"), "protocol_type": values.get("protocol_type", "openai_responses"), "base_url": values.get("base_url"), "timeout_seconds": values.get("timeout_seconds"), "organization": values.get("organization", ""), "enabled": values.get("enabled", True), "responses_model": values.get("responses_model"), "embedding_model": values.get("embedding_model"), "embedding_dimensions": values.get("embedding_dimensions"), "native_search_enabled": values.get("native_search_enabled", False)}
     _validate_provider_values(candidate)
     provider = Provider(provider_id=_new_provider_id(), name=candidate["name"], protocol_type=candidate["protocol_type"], base_url=candidate["base_url"], timeout_seconds=candidate["timeout_seconds"], organization=candidate["organization"], enabled=candidate["enabled"])
@@ -287,6 +309,7 @@ async def create_provider_config(session: AsyncSession, values: Mapping[str, obj
 
 
 async def update_provider_config(session: AsyncSession, provider_id: str, values: Mapping[str, object], username: str) -> dict[str, object]:
+    _validate_provider_secret(values.get("api_key"))
     provider = await session.scalar(select(Provider).where(Provider.provider_id == provider_id))
     if provider is None:
         raise ValueError("Unknown providerId")
