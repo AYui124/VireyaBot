@@ -1,6 +1,9 @@
 import asyncio
+import io
 import json
 import logging
+import secrets
+import traceback
 
 import httpx
 import pytest
@@ -928,6 +931,80 @@ def test_sdk_debug_logging_redacts_custom_headers_and_raw_errors(provider_type, 
             await client.aclose()
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("provider_type", PROVIDERS)
+@pytest.mark.parametrize("streamed", [False, True])
+@pytest.mark.parametrize("status", [200, 401, 429, 500])
+def test_transport_debug_logs_do_not_expose_upstream_secrets(provider_type, streamed, status, caplog):
+    key, header, body_secret = (secrets.token_hex(24) for _ in range(3))
+    direct_logs = io.StringIO()
+    direct_handler = logging.StreamHandler(direct_logs)
+    transport_logger = logging.getLogger("httpcore.http11")
+    transport_logger.addHandler(direct_handler)
+
+    async def run():
+        served = asyncio.get_running_loop().create_future()
+
+        async def serve(reader, writer):
+            try:
+                raw = await reader.readuntil(b"\r\n\r\n")
+                length = next(int(line.split(b":", 1)[1]) for line in raw.split(b"\r\n") if line.lower().startswith(b"content-length:"))
+                await reader.readexactly(length)
+                if status == 200 and streamed:
+                    body = _sse_response(provider_type, _stream_events(provider_type, text=body_secret)).content
+                    content_type = "text/event-stream"
+                else:
+                    payload = _response_body(provider_type, text=body_secret) if status == 200 else {"error": {"message": key + header + body_secret}}
+                    body = json.dumps(payload).encode()
+                    content_type = "application/json"
+                # Reason phrases and arbitrary response headers are untrusted too.
+                writer.write(f"HTTP/1.1 {status} {body_secret}\r\nContent-Type: {content_type}\r\nX-Upstream-Key: {key}\r\nX-Upstream-Header: {header}\r\nContent-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode() + body)
+                await writer.drain()
+            finally:
+                writer.close()
+                await writer.wait_closed()
+                served.set_result(None)
+
+        listener = await asyncio.start_server(serve, "127.0.0.1", 0)
+        port = listener.sockets[0].getsockname()[1]
+        async with listener:
+            provider = provider_type(ProviderConfig(base_url=f"http://127.0.0.1:{port}/v1", api_key=key, responses_model="model", embedding_model="embedding", extra_headers={"X-Private": header}))
+            try:
+                if status == 200:
+                    result = await provider.responses(ResponseRequest(input="hello", stream=streamed), trace_id="transport-log")
+                    assert result.output_text == body_secret
+                else:
+                    try:
+                        await provider.responses(ResponseRequest(input="hello", stream=streamed), trace_id="transport-log")
+                    except ProviderFailure as exc:
+                        expected = {401: ProviderErrorCode.AUTHENTICATION, 429: ProviderErrorCode.RATE_LIMITED, 500: ProviderErrorCode.UNAVAILABLE}[status]
+                        assert exc.failure.error_code == expected
+                        formatted_chain = "".join(traceback.format_exception(exc))
+                        assert all(value not in formatted_chain for value in (key, header, body_secret))
+                        logging.getLogger("provider-regression").exception("trace_id=%s code=%s", exc.failure.trace_id, exc.failure.error_code)
+                    else:
+                        pytest.fail("upstream failure was ignored")
+            finally:
+                await provider._close()
+                await asyncio.wait_for(served, timeout=3)
+
+    try:
+        with caplog.at_level(logging.DEBUG):
+            asyncio.run(run())
+        # Assert both originating handlers and root propagation, not just Failure.
+        assert "receive_response_headers.complete" in direct_logs.getvalue()
+        assert any(record.name == "httpcore.http11" for record in caplog.records)
+        assert any(record.name == "httpx" and str(status) in record.getMessage() for record in caplog.records)
+        if status != 200:
+            assert "transport-log" in caplog.text
+            assert str({401: ProviderErrorCode.AUTHENTICATION, 429: ProviderErrorCode.RATE_LIMITED, 500: ProviderErrorCode.UNAVAILABLE}[status]) in caplog.text
+        for secret in (key, header, body_secret):
+            assert secret not in caplog.text
+            assert secret not in direct_logs.getvalue()
+    finally:
+        transport_logger.removeHandler(direct_handler)
+        direct_handler.close()
 
 
 @pytest.mark.parametrize("provider_type", [OpenAIResponsesProvider, OpenAIChatCompletionsProvider])

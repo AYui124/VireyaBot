@@ -24,7 +24,7 @@ Provider 只负责选择官方 SDK、注入端点/密钥、统一契约和 SDK �
 
 事件以 `response_id` 标识响应，用量位于 `usage` 字段。正文仅由 `response.output_text.delta` 拼接，工具参数只位于 `output.arguments`，以 `response.tool_call.delta` / `response.tool_call.completed` 区分增量与完成；稳定调用身份位于 `output.call_id`。聚合保留响应 ID、文本、工具列表与用量。Chat 支持合法 finish reason 后不带 usage 的结束；Anthropic 汇总 message_start 输入用量与 message_delta 输出用量。截断或中途错误不产生成功完成；调用方必须取消消费任务或 `aclose()` 关闭下游断开的流。
 
-映射后的异常不携带原始 SDK 异常链。SDK 调试诊断仅保留静态日志模板和数值，过滤请求参数与原始异常，避免 DEBUG 日志泄露附加 Header。不要记录运行时配置对象、私有提示词或原始 SDK 对象；脱敏不是允许记录业务内容的授权。
+映射后的异常通过标准 traceback/`logger.exception` 渲染时不包含原始 SDK 异常链。调试脱敏覆盖官方 SDK、`httpx` 与 `httpcore` 的连接、HTTP/1.1、HTTP/2、代理日志，在源 Logger 的 Handler 处理前过滤。SDK/HTTPX 保留静态模板和数值状态码；httpcore 已拼入消息的响应 Header、异常和其他动态内容被移除，保留传输事件及阶段。不能只过滤 `LogRecord.args` 或只过滤父 Logger：前者遗漏 httpcore 的预格式化消息，后者不能保护子 Logger 自有 Handler。不要记录运行时配置、私有提示词或原始 SDK 对象；脱敏不是允许记录业务内容的授权。
 
 通用错误证据覆盖官方 SDK 的认证、限流、超时、连接、请求拒绝、失败响应和异常截断；适配器不再手写 HTTP 鉴权头或 SSE 分帧。真实端点未使用本任务凭据验证。
 
@@ -48,6 +48,8 @@ Provider 只负责选择官方 SDK、注入端点/密钥、统一契约和 SDK �
 | `ProviderModelConfig.temperature` | number/null | 空值不传 SDK；OpenAI 0–2，Anthropic 0–1 |
 | `ProviderModelConfig.max_output_tokens` | integer | 1–32768；转换为协议对应的输出限制参数 |
 | `ProviderSecret.extra_headers` | encrypted JSON | 加密名称/值映射，仅名称可读取 |
+
+Anthropic 基础地址可使用根地址、`/v1` 或 `/v1/`；数据库保留用户保存值，适配器先移除尾部斜杠，再去掉末尾的 `/v1`，交给官方 SDK 添加 `/v1/messages`。例如 `/gateway/v1/` 正确请求 `/gateway/v1/messages`，保留代理路径前缀，不生成 `/v1/v1/messages`。公共创建/更新 → PostgreSQL 解析 → 官方 SDK 实际 TCP 请求覆盖非流式和流式两条路径。
 
 先运行 `alembic upgrade head` 至 `0004_provider_project`，再启动应用执行 bootstrap。旧 `provider.*` 固定迁移为 `openai_responses`，保持确定的默认 ID 和密钥/模型关联；已有 0002 资源 ID 不变。0003 新增的空 Header 默认值不会被当作 Fernet 密文解密；已有密文不会被重复加密。重复初始化和重启不覆盖管理员值。
 

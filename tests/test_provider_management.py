@@ -1,6 +1,7 @@
 """Exercise the authenticated public API against isolated PostgreSQL schemas."""
 
 import asyncio
+import json
 import os
 import unittest
 import uuid
@@ -13,6 +14,7 @@ from app.config import settings
 from app.db import get_session
 from app.main import app
 from app.models import Base, ConfigChange, ProviderSecret
+from app.providers import ResponseRequest, build_provider
 from app.repository import bootstrap, read_provider_runtime_settings
 
 
@@ -20,6 +22,73 @@ from app.repository import bootstrap, read_provider_runtime_settings
 class ProviderManagementTest(unittest.TestCase):
     def test_authenticated_lifecycle_and_isolation(self):
         asyncio.run(self.exercise())
+
+    async def exercise_anthropic_paths(self, client, sessions):
+        observed = []
+        handlers = set()
+
+        async def serve(reader, writer):
+            task = asyncio.current_task()
+            handlers.add(task)
+            try:
+                raw = await reader.readuntil(b"\r\n\r\n")
+                path = raw.split(b" ")[1].decode()
+                length = next(int(line.split(b":", 1)[1]) for line in raw.split(b"\r\n") if line.lower().startswith(b"content-length:"))
+                payload = json.loads(await reader.readexactly(length))
+                observed.append((path, payload["model"]))
+                valid = path in {"/v1/messages", "/gateway/v1/messages"}
+                message = {"id": "msg-saved-url", "type": "message", "role": "assistant", "model": "saved-model", "content": [{"type": "text", "text": "saved URL works"}], "stop_reason": "end_turn", "stop_sequence": None, "usage": {"input_tokens": 1, "output_tokens": 2}}
+                if valid and payload.get("stream"):
+                    events = [
+                        {"type": "message_start", "message": message | {"content": [], "stop_reason": None}},
+                        {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+                        {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "saved URL "}},
+                        {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "works"}},
+                        {"type": "content_block_stop", "index": 0},
+                        {"type": "message_delta", "delta": {"stop_reason": "end_turn", "stop_sequence": None}, "usage": {"output_tokens": 2}},
+                        {"type": "message_stop"},
+                    ]
+                    body = "".join(f"event: {event['type']}\ndata: {json.dumps(event)}\n\n" for event in events).encode()
+                    content_type = "text/event-stream"
+                else:
+                    body = json.dumps(message if valid else {"error": {"type": "not_found_error", "message": "wrong path"}}).encode()
+                    content_type = "application/json"
+                writer.write(f"HTTP/1.1 {'200 OK' if valid else '404 Not Found'}\r\nContent-Type: {content_type}\r\nContent-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode() + body)
+                await writer.drain()
+            finally:
+                writer.close()
+                await writer.wait_closed()
+                handlers.discard(task)
+
+        listener = await asyncio.start_server(serve, "127.0.0.1", 0)
+        port = listener.sockets[0].getsockname()[1]
+        try:
+            async with listener:
+                for prefix in ("", "/gateway"):
+                    created = await client.post("/api/providers", json={"name": "Saved Anthropic URL", "protocol_type": "anthropic_messages", "base_url": f"http://127.0.0.1:{port}{prefix}/v1", "timeout_seconds": 3, "responses_model": "saved-model", "api_key": uuid.uuid4().hex})
+                    self.assertEqual(created.status_code, 200)
+                    provider_id = created.json()["providerId"]
+                    for suffix in ("/v1", "/v1/"):
+                        url = f"http://127.0.0.1:{port}{prefix}{suffix}"
+                        saved = await client.put("/api/providers/" + provider_id, json={"base_url": url})
+                        self.assertEqual(saved.status_code, 200)
+                        self.assertEqual(saved.json()["providerId"], provider_id)
+                        async with sessions() as session:
+                            runtime = await read_provider_runtime_settings(session, provider_id)
+                            self.assertEqual(runtime["base_url"], url)
+                            provider = await build_provider(session, provider_id)
+                        try:
+                            for streamed in (False, True):
+                                result = await provider.responses(ResponseRequest(input="saved URL", stream=streamed), trace_id="saved-url")
+                                self.assertEqual(result.output_text, "saved URL works")
+                                self.assertEqual(result.id, "msg-saved-url")
+                                self.assertEqual(observed[-1], (prefix + "/v1/messages", "saved-model"))
+                        finally:
+                            await provider._close()
+                    self.assertEqual((await client.delete("/api/providers/" + provider_id)).status_code, 200)
+        finally:
+            if handlers:
+                await asyncio.gather(*handlers)
 
     async def exercise(self):
         url = os.environ["VIREYA_TEST_DATABASE_URL"]
@@ -118,6 +187,7 @@ class ProviderManagementTest(unittest.TestCase):
                 self.assertEqual((await client.delete(path)).status_code, 200)
                 self.assertEqual((await client.put(path, json={"enabled": True})).status_code, 404)
                 self.assertEqual([item["providerId"] for item in (await client.get("/api/providers")).json()], ids[1:])
+                await self.exercise_anthropic_paths(client, sessions)
         finally:
             app.dependency_overrides.pop(get_session, None)
             await engine.dispose()

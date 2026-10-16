@@ -24,10 +24,16 @@ SCHEMA_VERSION = "v1"
 
 
 class _SdkDiagnosticFilter(logging.Filter):
-    """Retain SDK diagnostic templates, never request headers or raw exceptions."""
+    """Keep diagnostic events/status codes, not SDK or HTTP wire payloads."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        if isinstance(record.args, tuple):
+        if record.name.startswith("httpcore."):
+            # httpcore.Trace embeds repr(headers/errors) into msg, not args.
+            # Its first token is the transport-owned event name and phase.
+            event, _, detail = str(record.msg).partition(" ")
+            record.msg = event + (" [REDACTED]" if detail else "")
+            record.args = ()
+        elif isinstance(record.args, tuple):
             record.args = tuple(value if type(value) in {int, float} else "[REDACTED]" for value in record.args)
         elif record.args:
             record.args = {"redacted": True}
@@ -41,11 +47,17 @@ _SDK_DIAGNOSTIC_FILTER = _SdkDiagnosticFilter()
 
 
 def _sanitize_sdk_logging() -> None:
-    for package in ("openai", "anthropic"):
-        for module in ("_base_client", "_response", "_legacy_response"):
-            logger = logging.getLogger(f"{package}.{module}")
-            if _SDK_DIAGNOSTIC_FILTER not in logger.filters:
-                logger.addFilter(_SDK_DIAGNOSTIC_FILTER)
+    names = [
+        f"{package}.{module}"
+        for package in ("openai", "anthropic")
+        for module in ("_base_client", "_response", "_legacy_response")
+    ]
+    # Logger filters do not run on ancestor loggers during propagation.
+    names.extend(("httpx", "httpcore.connection", "httpcore.http11", "httpcore.http2", "httpcore.proxy", "httpcore.socks"))
+    for name in names:
+        logger = logging.getLogger(name)
+        if _SDK_DIAGNOSTIC_FILTER not in logger.filters:
+            logger.addFilter(_SDK_DIAGNOSTIC_FILTER)
 
 
 class ProviderCapability(StrEnum):
@@ -837,7 +849,7 @@ class AnthropicMessagesProvider(OpenAIChatCompletionsProvider):
     def __init__(self, config: ProviderConfig, *, client: httpx.AsyncClient | None = None) -> None:
         _sanitize_sdk_logging()
         self.config = config
-        anthropic_base_url = config.base_url.removesuffix("/v1")
+        anthropic_base_url = config.base_url.rstrip("/").removesuffix("/v1")
         self._client = AsyncAnthropic(api_key=config.api_key, base_url=anthropic_base_url, timeout=config.timeout_seconds, max_retries=0, default_headers=config.extra_headers or None, http_client=client)
         self._http_client = client
         self._owns_http_client = client is None
