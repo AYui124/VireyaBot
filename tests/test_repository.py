@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from app.models import Setting
 from app.repository import DEFAULT_VALUES, SECRET_KEYS, _flatten, _repair_secret_row
 from app.security import decrypt
@@ -24,3 +26,12 @@ def test_existing_plaintext_secret_row_is_repaired_and_decryptable() -> None:
     assert row.is_secret is True
     assert row.value != json.dumps("synthetic-key")
     assert decrypt(row.value) == "synthetic-key"
+
+
+def test_provider_runtime_options_reject_reserved_headers_and_anthropic_overrides() -> None:
+    from app.repository import _validate_provider_runtime_options, _validate_provider_values
+
+    with pytest.raises(ValueError, match="forbidden"):
+        _validate_provider_runtime_options({"default_stream": False, "temperature": None, "max_output_tokens": 4096, "extra_headers": {"Authorization": "override"}})
+    with pytest.raises(ValueError, match="between 0 and 1"):
+        _validate_provider_values({"protocol_type": "anthropic_messages", "base_url": "https://api.anthropic.com", "timeout_seconds": 30, "embedding_dimensions": None, "name": "A", "responses_model": "claude", "embedding_model": "", "organization": "", "enabled": True, "native_search_enabled": False, "temperature": 1.5})
