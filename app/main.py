@@ -54,12 +54,12 @@ class SnowLumaRequest(BaseModel):
 
 class ProviderCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
-    protocol_type: Literal["openai_responses"] = "openai_responses"
+    protocol_type: Literal["openai_responses", "openai_chat_completions", "anthropic_messages"] = "openai_responses"
     base_url: str = Field(min_length=1, max_length=500)
     timeout_seconds: float = Field(gt=0, le=600)
     organization: str = Field(default="", max_length=160)
     enabled: bool = True
-    api_key: str | None = Field(default=None, max_length=10_000)
+    api_key: str | None = None
     responses_model: str = Field(min_length=1, max_length=160)
     embedding_model: str = Field(min_length=1, max_length=160)
     embedding_dimensions: int | None = Field(default=None, gt=0)
@@ -68,12 +68,12 @@ class ProviderCreateRequest(BaseModel):
 
 class ProviderUpdateRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
-    protocol_type: Literal["openai_responses"] | None = None
+    protocol_type: Literal["openai_responses", "openai_chat_completions", "anthropic_messages"] | None = None
     base_url: str | None = Field(default=None, min_length=1, max_length=500)
     timeout_seconds: float | None = Field(default=None, gt=0, le=600)
     organization: str | None = Field(default=None, max_length=160)
     enabled: bool | None = None
-    api_key: str | None = Field(default=None, max_length=10_000)
+    api_key: str | None = None
     responses_model: str | None = Field(default=None, min_length=1, max_length=160)
     embedding_model: str | None = Field(default=None, min_length=1, max_length=160)
     embedding_dimensions: int | None = Field(default=None, gt=0)

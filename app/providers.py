@@ -56,6 +56,7 @@ class ProviderConfig:
     organization: str | None = None
     native_search_enabled: bool = False
     embedding_dimensions: int | None = None
+    protocol_type: str = "openai_responses"
 
     def __post_init__(self) -> None:
         if not self.base_url.startswith(("http://", "https://")):
@@ -181,6 +182,14 @@ def _validate_request(request: ResponseRequest, trace_id: str) -> None:
         raise _failure(trace_id, ProviderErrorCode.INVALID_REQUEST, "unsupported provider schema version", retryable=False)
     if not trace_id or (request.trace_id and request.trace_id != trace_id):
         raise _failure(trace_id or request.trace_id, ProviderErrorCode.INVALID_REQUEST, "provider trace_id conflict", retryable=False)
+
+def _has_image_input(value: str | list[dict[str, Any]]) -> bool:
+    return isinstance(value, list) and any(
+        isinstance(part, dict)
+        and any(isinstance(content, dict) and content.get("type") == "input_image" for content in part.get("content", []))
+        for part in value
+    )
+
 
 
 class OpenAIResponsesProvider:
@@ -355,6 +364,184 @@ class OpenAIResponsesProvider:
         return await self.responses(ResponseRequest(input=query, tools=[{"type": "web_search_preview"}]), trace_id=trace_id)
 
 
+class OpenAIChatCompletionsProvider(OpenAIResponsesProvider):
+    """OpenAI Chat Completions-compatible adapter with normalized outputs."""
+
+    capabilities = frozenset({ProviderCapability.TEXT, ProviderCapability.STREAMING, ProviderCapability.STRUCTURED_OUTPUT, ProviderCapability.TOOL_CALLING, ProviderCapability.EMBEDDING, ProviderCapability.EMBEDDING_BATCH})
+
+    def _headers(self) -> dict[str, str]:
+        headers = super()._headers()
+        headers["Content-Type"] = "application/json"
+        return headers
+
+    @staticmethod
+    def _messages(request: ResponseRequest) -> list[dict[str, Any]]:
+        if isinstance(request.input, str):
+            messages: list[dict[str, Any]] = [{"role": "user", "content": request.input}]
+        else:
+            messages = list(request.input)
+        if request.instructions:
+            messages.insert(0, {"role": "system", "content": request.instructions})
+        return messages
+
+    async def responses(self, request: ResponseRequest, *, trace_id: str) -> ResponseResult:
+        _validate_request(request, trace_id)
+        if _has_image_input(request.input):
+            raise _failure(trace_id, ProviderErrorCode.INVALID_REQUEST, "image input is not supported by this Provider", retryable=False)
+        payload: dict[str, Any] = {"model": request.model or self.config.responses_model, "messages": self._messages(request)}
+        if request.response_format is not None:
+            payload["response_format"] = request.response_format
+        if request.tools:
+            payload["tools"] = request.tools
+        value = await self._request("POST", "/chat/completions", payload, trace_id=trace_id)
+        choices = value.get("choices")
+        if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+            raise _failure(trace_id, ProviderErrorCode.UNAVAILABLE, "provider returned an invalid response", retryable=True)
+        message = _dict(choices[0].get("message"))
+        text = message.get("content") if isinstance(message.get("content"), str) else ""
+        output = [ProviderOutput(type="message", id=str(value.get("id", "")), text=text)]
+        calls: list[ToolCallResult] = []
+        for call in message.get("tool_calls", []):
+            if isinstance(call, dict):
+                function = _dict(call.get("function"))
+                name, arguments = function.get("name"), function.get("arguments")
+                if isinstance(name, str) and isinstance(arguments, str):
+                    calls.append(ToolCallResult(id=str(call.get("id", "")), name=name, arguments=arguments))
+                    output.append(ProviderOutput(type="tool_call", id=str(call.get("id", "")), call_id=str(call.get("id", "")), name=name, arguments=arguments))
+        return ResponseResult(trace_id=trace_id, id=str(value.get("id", "")), output_text=text, output=output, usage=_dict(value.get("usage")), tool_calls=calls)
+
+    async def stream_responses(self, request: ResponseRequest, *, trace_id: str) -> AsyncIterator[StreamEvent]:
+        _validate_request(request, trace_id)
+        payload: dict[str, Any] = {"model": request.model or self.config.responses_model, "messages": self._messages(request), "stream": True, "stream_options": {"include_usage": True}}
+        if request.response_format is not None:
+            payload["response_format"] = request.response_format
+        if request.tools:
+            payload["tools"] = request.tools
+        async for event in self._stream_sse("/chat/completions", payload, trace_id=trace_id):
+            choices = event.get("choices")
+            if not isinstance(choices, list) or not choices:
+                if event.get("usage") is not None:
+                    yield StreamEvent(trace_id=trace_id, event_type="usage", output=ProviderOutput(type="usage", text=json.dumps(event["usage"])))
+                continue
+            choice = _dict(choices[0])
+            delta = _dict(choice.get("delta"))
+            text = delta.get("content") if isinstance(delta.get("content"), str) else None
+            if text:
+                yield StreamEvent(trace_id=trace_id, event_type="response.output_text.delta", delta=text)
+            for call in delta.get("tool_calls", []):
+                if isinstance(call, dict):
+                    function = _dict(call.get("function"))
+                    if isinstance(function.get("name"), str) or isinstance(function.get("arguments"), str):
+                        yield StreamEvent(trace_id=trace_id, event_type="response.tool_call.delta", output=ProviderOutput(type="tool_call", id=str(call.get("id", "")), call_id=str(call.get("id", "")), name=function.get("name"), arguments=function.get("arguments")))
+            if choice.get("finish_reason"):
+                yield StreamEvent(trace_id=trace_id, event_type="response.completed")
+
+    async def _stream_sse(self, path: str, payload: Mapping[str, Any], *, trace_id: str) -> AsyncIterator[dict[str, Any]]:
+        client = self._client or httpx.AsyncClient(timeout=self.config.timeout_seconds)
+        try:
+            try:
+                async with client.stream("POST", self._url(path), headers=self._headers(), json=payload) as response:
+                    await _raise_for_status(response, trace_id)
+                    async for line in response.aiter_lines():
+                        if not line or not line.startswith("data:"):
+                            continue
+                        raw = line[5:].strip()
+                        if raw == "[DONE]":
+                            return
+                        try:
+                            value = json.loads(raw)
+                        except json.JSONDecodeError as exc:
+                            raise _failure(trace_id, ProviderErrorCode.UNAVAILABLE, "provider returned invalid stream data", retryable=True) from exc
+                        if not isinstance(value, dict):
+                            raise _failure(trace_id, ProviderErrorCode.UNAVAILABLE, "provider returned invalid stream data", retryable=True)
+                        if value.get("type") == "error":
+                            raise _failure(trace_id, ProviderErrorCode.UNAVAILABLE, "provider stream returned an error", retryable=False)
+                        yield value
+            except httpx.TimeoutException as exc:
+                raise _failure(trace_id, ProviderErrorCode.TIMEOUT, "provider request timed out", retryable=True) from exc
+            except httpx.HTTPError as exc:
+                raise _failure(trace_id, ProviderErrorCode.UNAVAILABLE, "provider transport unavailable", retryable=True) from exc
+        finally:
+            if self._owns_client:
+                await client.aclose()
+
+
+class AnthropicMessagesProvider(OpenAIChatCompletionsProvider):
+    """Anthropic Messages adapter; embeddings and native search are unavailable."""
+
+    capabilities = frozenset({ProviderCapability.TEXT, ProviderCapability.STREAMING, ProviderCapability.TOOL_CALLING})
+
+    def _headers(self) -> dict[str, str]:
+        return {"x-api-key": self.config.api_key, "anthropic-version": "2023-06-01", "Content-Type": "application/json"}
+
+    @staticmethod
+    def _anthropic_messages(request: ResponseRequest) -> tuple[str | None, list[dict[str, Any]]]:
+        if isinstance(request.input, str):
+            messages = [{"role": "user", "content": request.input}]
+        else:
+            messages = list(request.input)
+        return request.instructions, messages
+
+    async def responses(self, request: ResponseRequest, *, trace_id: str) -> ResponseResult:
+        _validate_request(request, trace_id)
+        if request.response_format is not None:
+            raise _failure(trace_id, ProviderErrorCode.INVALID_REQUEST, "structured output is not supported by this Provider", retryable=False)
+        if _has_image_input(request.input):
+            raise _failure(trace_id, ProviderErrorCode.INVALID_REQUEST, "image input is not supported by this Provider", retryable=False)
+        system, messages = self._anthropic_messages(request)
+        payload: dict[str, Any] = {"model": request.model or self.config.responses_model, "max_tokens": 4096, "messages": messages}
+        if system:
+            payload["system"] = system
+        if request.tools:
+            payload["tools"] = request.tools
+        value = await self._request("POST", "/messages", payload, trace_id=trace_id)
+        content = value.get("content")
+        if not isinstance(content, list):
+            raise _failure(trace_id, ProviderErrorCode.UNAVAILABLE, "provider returned an invalid response", retryable=True)
+        output: list[ProviderOutput] = []
+        calls: list[ToolCallResult] = []
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") == "text" and isinstance(item.get("text"), str):
+                output.append(ProviderOutput(type="message", text=item["text"]))
+            elif item.get("type") == "tool_use" and isinstance(item.get("name"), str):
+                arguments = json.dumps(item.get("input", {}), ensure_ascii=False)
+                call = ToolCallResult(id=str(item.get("id", "")), name=item["name"], arguments=arguments)
+                calls.append(call)
+                output.append(ProviderOutput(type="tool_call", id=call.id, call_id=call.id, name=call.name, arguments=call.arguments))
+        return ResponseResult(trace_id=trace_id, id=str(value.get("id", "")), output_text=_extract_text(output), output=output, usage=_dict(value.get("usage")), tool_calls=calls)
+
+    async def stream_responses(self, request: ResponseRequest, *, trace_id: str) -> AsyncIterator[StreamEvent]:
+        _validate_request(request, trace_id)
+        if request.response_format is not None:
+            raise _failure(trace_id, ProviderErrorCode.INVALID_REQUEST, "structured output is not supported by this Provider", retryable=False)
+        if _has_image_input(request.input):
+            raise _failure(trace_id, ProviderErrorCode.INVALID_REQUEST, "image input is not supported by this Provider", retryable=False)
+        system, messages = self._anthropic_messages(request)
+        payload: dict[str, Any] = {"model": request.model or self.config.responses_model, "max_tokens": 4096, "messages": messages, "stream": True}
+        if system:
+            payload["system"] = system
+        if request.tools:
+            payload["tools"] = request.tools
+        async for data in self._stream_sse("/messages", payload, trace_id=trace_id):
+            event_type = data.get("type")
+            if event_type == "content_block_delta":
+                delta = _dict(data.get("delta"))
+                if isinstance(delta.get("text"), str):
+                    yield StreamEvent(trace_id=trace_id, event_type="response.output_text.delta", delta=delta["text"])
+                elif isinstance(delta.get("partial_json"), str):
+                    yield StreamEvent(trace_id=trace_id, event_type="response.tool_call.delta", delta=delta["partial_json"])
+            elif event_type == "message_delta":
+                yield StreamEvent(trace_id=trace_id, event_type="usage", output=ProviderOutput(type="usage", text=json.dumps(_dict(data.get("usage")))))
+            elif event_type == "message_stop":
+                yield StreamEvent(trace_id=trace_id, event_type="response.completed")
+
+    async def embeddings(self, inputs: list[str], *, trace_id: str) -> EmbeddingResult:
+        raise _failure(trace_id, ProviderErrorCode.INVALID_REQUEST, "embedding is not supported by this Provider", retryable=False)
+    async def search(self, query: str, *, trace_id: str) -> ResponseResult:
+        raise _failure(trace_id, ProviderErrorCode.INVALID_REQUEST, "native web search is not supported by this Provider", retryable=False)
+
 async def _raise_for_status(response: httpx.Response, trace_id: str) -> None:
     if response.status_code in {401, 403}:
         raise _failure(trace_id, ProviderErrorCode.AUTHENTICATION, "provider authentication failed", retryable=False)
@@ -496,9 +683,16 @@ def redact_provider_payload(value: Any) -> Any:
     return value
 
 
-async def build_provider(session: Any, provider_id: str) -> OpenAIResponsesProvider:
-    """Construct one enabled Provider from PostgreSQL by stable ID."""
+async def build_provider(session: Any, provider_id: str) -> ModelProvider:
+    """Construct exactly the enabled protocol selected by stable ID."""
     from app.repository import read_provider_runtime_settings
 
     values = await read_provider_runtime_settings(session, provider_id)
-    return OpenAIResponsesProvider(ProviderConfig(**values))
+    config = ProviderConfig(**values)
+    if config.protocol_type == "openai_chat_completions":
+        return OpenAIChatCompletionsProvider(config)
+    if config.protocol_type == "anthropic_messages":
+        return AnthropicMessagesProvider(config)
+    if config.protocol_type == "openai_responses":
+        return OpenAIResponsesProvider(config)
+    raise ValueError("unsupported provider protocol")
