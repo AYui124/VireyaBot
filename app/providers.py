@@ -496,9 +496,9 @@ def redact_provider_payload(value: Any) -> Any:
     return value
 
 
-async def build_provider(session: Any) -> OpenAIResponsesProvider:
-    """Construct a provider from PostgreSQL configuration, never from environment secrets."""
+async def build_provider(session: Any, provider_id: str) -> OpenAIResponsesProvider:
+    """Construct one enabled Provider from PostgreSQL by stable ID."""
     from app.repository import read_provider_runtime_settings
 
-    values = await read_provider_runtime_settings(session)
+    values = await read_provider_runtime_settings(session, provider_id)
     return OpenAIResponsesProvider(ProviderConfig(**values))
