@@ -307,7 +307,7 @@ def test_chat_stream_requires_done_and_orders_usage_before_completion() -> None:
 
 def test_anthropic_stream_keeps_input_usage_and_tool_identity() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
-        body = b'data: {"type":"message_start","message":{"usage":{"input_tokens":3}}}\n\ndata: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"tool-1","name":"lookup"}}\n\ndata: {"type":"content_block_delta","index":1,"delta":{"partial_json":"{}"}}\n\ndata: {"type":"message_delta","usage":{"output_tokens":1}}\n\ndata: {"type":"message_stop"}\n\ndata: [DONE]\n\n'
+        body = b'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":3}}}\n\nevent: content_block_start\ndata: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"tool-1","name":"lookup"}}\n\nevent: content_block_delta\ndata: {"type":"content_block_delta","index":1,"delta":{"partial_json":"{}"}}\n\nevent: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":1}}\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n'
         return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
 
     async def run() -> None:

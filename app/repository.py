@@ -157,6 +157,7 @@ async def read_snowluma_runtime_settings(session: AsyncSession) -> dict[str, obj
             result["token_configured"] = bool(result["token"])
         else:
             result[key] = json.loads(row.value)
+    return result
 
 def _validate_provider_secret(value: object) -> None:
     if value is None:
