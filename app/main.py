@@ -60,7 +60,6 @@ class SnowLumaRequest(BaseModel):
 
 class ProviderCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    name: str = Field(min_length=1, max_length=120)
     protocol_type: Literal["openai_responses", "openai_chat_completions", "anthropic_messages"] = "openai_responses"
     base_url: str = Field(min_length=1, max_length=500)
     timeout_seconds: float = Field(gt=0, le=600)
@@ -72,14 +71,12 @@ class ProviderCreateRequest(BaseModel):
     embedding_dimensions: int | None = Field(default=None, gt=0)
     native_search_enabled: bool = False
     default_stream: bool = False
-    temperature: float | None = Field(default=None, ge=0, le=2)
     max_output_tokens: int = Field(default=4096, ge=1, le=32768)
     extra_headers: dict[str, StrictStr] = Field(default_factory=dict, max_length=32)
 
 
 class ProviderUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    name: str | None = Field(default=None, min_length=1, max_length=120)
     protocol_type: Literal["openai_responses", "openai_chat_completions", "anthropic_messages"] | None = None
     base_url: str | None = Field(default=None, min_length=1, max_length=500)
     timeout_seconds: float | None = Field(default=None, gt=0, le=600)
@@ -87,11 +84,10 @@ class ProviderUpdateRequest(BaseModel):
     enabled: bool | None = None
     api_key: str | None = None
     responses_model: str | None = Field(default=None, min_length=1, max_length=160)
-    embedding_model: str | None = Field(default=None, max_length=160)
+    embedding_model: str | None = Field(default=None, min_length=1, max_length=160)
     embedding_dimensions: int | None = Field(default=None, gt=0)
     native_search_enabled: bool | None = None
     default_stream: bool | None = None
-    temperature: float | None = Field(default=None, ge=0, le=2)
     max_output_tokens: int | None = Field(default=None, ge=1, le=32768)
     extra_headers: dict[str, StrictStr] | None = Field(default=None, max_length=32)
 
