@@ -44,6 +44,7 @@ class Provider(Base):
     base_url: Mapped[str] = mapped_column(String(500))
     timeout_seconds: Mapped[float] = mapped_column(Float)
     organization: Mapped[str] = mapped_column(String(160), default="")
+    project: Mapped[str] = mapped_column(String(160), default="")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

@@ -59,3 +59,14 @@ h1, h2, h3, p { margin: 0; } h1 { font: 700 29px 'Space Grotesk', sans-serif; co
 .check-field { display: flex; align-items: center; gap: 9px; color: #344156; font-size: 13px; }
 .check-field input { accent-color: #0f766e; }
 @media (max-width: 980px) { .provider-layout { grid-template-columns: 1fr; } }
+.provider-fields { border: 0; margin: 0; padding: 0; min-width: 0; }
+.provider-fields:disabled { opacity: .65; }
+.provider-header-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 12px; align-items: end; }
+.provider-row { width: 100%; border: 1px solid #e5eaf1; background: #fff; border-radius: 10px; padding: 12px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; gap: 10px; text-align: left; color: #344156; }
+.provider-row:hover:not(:disabled), .provider-row.selected { border-color: #2dd4bf; background: #f0fdfa; }
+.provider-row strong, .provider-row small { display: block; overflow-wrap: anywhere; }
+.provider-row small { color: #72809a; font-size: 11px; margin-top: 4px; }
+.provider-layout .checkbox { display: flex; gap: 9px; align-items: center; font-size: 13px; }
+.provider-layout .icon-button { display: inline-flex; vertical-align: middle; border: 0; background: #eef2f7; border-radius: 5px; padding: 5px; }
+.provider-layout code { overflow-wrap: anywhere; }
+@media (max-width: 620px) { .provider-header-row { grid-template-columns: 1fr; } .provider-header-row > button { justify-self: start; } }

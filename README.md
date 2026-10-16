@@ -1,10 +1,10 @@
 # VireyaBot
 
-VireyaBot 是面向外部 SnowLuma / OneBot v11 的 AI Agent 平台。本阶段交付可部署的管理框架，以及不自动启动的 OneBot v11 接入边界：管理员 Web 登录、React + TypeScript + shadcn/ui 管理界面、PostgreSQL 配置存储、秘密加密和 Docker Compose 健康检查。Agent、模型、搜索、记忆、工作流和插件不在本阶段范围内。
+VireyaBot 是面向外部 SnowLuma / OneBot v11 的 AI Agent 平台。当前提供管理员 Web 登录、React + TypeScript 管理界面、PostgreSQL 配置与秘密加密、独立多 Provider 官方 SDK 调用边界，以及不自动启动的 OneBot v11 网关。完整 Agent 编排、记忆、工作流和插件运行时仍属于后续阶段。
 
 ## 本地启动
 
-需要 Python 3.12、Node.js 22+、uv 和 Docker Compose。先准备本地引导配置：
+需要 Python 3.12、Node.js 22+、uv 和独立开发 PostgreSQL。先准备本地引导配置；不要复制长期实例的 `.env` 或业务数据库：
 
 ```sh
 cp .env.example .env
@@ -13,11 +13,12 @@ uv sync --frozen
 uv run python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
 # 将上一个命令输出写入 .env 的 CONFIG_MASTER_KEY，并修改 ADMIN_PASSWORD
 
-docker compose up --build -d
-docker compose ps
+# 将 DATABASE_URL 指向独立开发数据库，不能使用长期业务库
+uv run --frozen alembic upgrade head
+uv run --frozen uvicorn app.main:app --host 127.0.0.1 --port 18000
 ```
 
-应用地址为 <http://localhost:8000>。初始管理员由 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD` 引导；迁移由 Compose 应用容器执行。数据库配置一旦写入，重启不会被 YAML 默认值覆盖。生产镜像构建时会在 Docker 多阶段构建中生成前端静态资源，不需要单独运行 Node 服务。
+开发地址为 <http://localhost:18000>。初始管理员由 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD` 引导。数据库配置一旦写入，重启不会被 YAML 默认值覆盖。生产镜像构建时生成前端静态资源，不需要单独运行 Node 服务。禁止从仓库或任务 Worktree 启动 Compose；长期实例仅由 `/opt/VireyaBot` 的外置 Compose 引用不可变修订镜像，发布前执行迁移，再以 `--no-build --wait` 启动。开发验证只使用独立数据库和临时容器，不重启长期实例。
 
 ## 管理界面
 
@@ -27,6 +28,7 @@ React 单页管理控制台使用仓库内锁定的 React、TypeScript、Tailwin
 - 系统状态和数据库健康信息；
 - 通用设置的加载、保存中、成功、失败和校验反馈；
 - SnowLuma / OneBot v11 模式、地址和 Token 配置，Token 不回传明文；
+- 中文多 Provider 配置、稳定 ID 复制、三协议字段切换与确认、秘密 Header 行编辑；
 - 桌面与窄屏布局、键盘焦点样式和清晰字段标签。
 
 真实浏览器回归覆盖桌面/窄屏、焦点、加载、成功、失败和重复提交路径。测试只使用合成账号与 Token。
@@ -65,7 +67,11 @@ Responses、多模态、流式事件、结构化输出、工具调用、可选�
 
 管理员登录后访问 `/providers` 管理多条独立 Provider 配置。每条记录拥有稳定 `providerId`，可分别新增、编辑、启用/停用和复制引用；API key 只显示是否已配置，留空编辑保留已有密钥。配置表拆分为 Provider 连接资源、加密 secret 资源和模型能力资源，运行时必须通过 `build_provider(session, provider_id)` 按 ID 解析，不会静默切换其他 Provider。
 
-迁移 `0002_provider_resources` 创建多 Provider 表。旧的单套 `provider.*` PostgreSQL 配置在首次 bootstrap 时迁移为稳定默认 Provider 并删除旧设置行；新空库保持可理解空状态。页面保存不会连接或调用真实服务。Docker 发布使用不可变修订号镜像，先执行 `alembic upgrade head`，再启动应用；本任务不更新长期实例。
+迁移 `0002_provider_resources` 创建多 Provider 表，`0003_provider_runtime_options` 增加调用默认值及加密 Header，`0004_provider_project` 增加 OpenAI 项目字段。旧单套 `provider.*` PostgreSQL 配置由 bootstrap 迁移为稳定默认 Provider 并删除旧设置行；空库不自动创建 Provider。已有 0002 的空 Header 可正常升级、读取和编辑。保存不调用真实服务，本开发任务不更新长期实例。
+
+字段元数据由认证接口 `GET /api/provider-protocols` 统一提供；创建、更新拒绝未知或协议不适用字段。Header 仅回传名称与配置状态，空值保留、重命名保留、删除行显式移除；Key 留空保持不变。调用 `ResponseRequest(stream=...)` 可覆盖模型默认流式，`None` 才采用默认值，关闭默认不关闭流式能力。
+
+验证使用 `uv sync --frozen`、`uv run --frozen pytest -q`、`uv run --frozen ruff check app tests alembic` 和 `frontend` 内的 `npm ci && npm run typecheck && npm run build`。公共管理 API 的 PostgreSQL 回归通过 `VIREYA_TEST_DATABASE_URL` 指向独立测试数据库，自动创建并清理随机 schema；未提供时该项会明确跳过，不能据此声称持久化验收通过。
 
 ### NoneBot2 兼容性结论
 

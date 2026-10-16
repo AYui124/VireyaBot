@@ -9,6 +9,7 @@ export type ProviderConfig = {
   baseUrl: string;
   timeoutSeconds: number;
   organization: string;
+  project: string;
   enabled: boolean;
   apiKeyConfigured: boolean;
   responsesModel: string;
@@ -19,8 +20,12 @@ export type ProviderConfig = {
   temperature: number | null;
   maxOutputTokens: number;
   extraHeadersConfigured: boolean;
+  extraHeaderNames: string[];
 };
-export type ProviderInput = Omit<ProviderConfig, "providerId" | "apiKeyConfigured" | "extraHeadersConfigured"> & { apiKey?: string; extraHeaders?: Record<string, string> }
+export type HeaderInput = { name: string; value: string; previous_name?: string };
+export type ProviderInput = Omit<ProviderConfig, "providerId" | "apiKeyConfigured" | "extraHeadersConfigured" | "extraHeaderNames"> & { apiKey?: string; extraHeaders?: HeaderInput[]; confirmProtocolChange?: boolean };
+export type ProviderProtocol = { label: string; fields: string[]; temperature_max: number; defaults: { responses_model: string; embedding_model: string; base_url: string; max_output_tokens: number }; capabilities: string[] };
+export type ProviderProtocols = Record<ProtocolType, ProviderProtocol>;
 
 function providerPayload(values: Partial<ProviderInput>): Record<string, unknown> {
   return {
@@ -29,6 +34,7 @@ function providerPayload(values: Partial<ProviderInput>): Record<string, unknown
     base_url: values.baseUrl,
     timeout_seconds: values.timeoutSeconds,
     organization: values.organization,
+    project: values.project,
     enabled: values.enabled,
     ...(values.apiKey !== undefined ? { api_key: values.apiKey } : {}),
     responses_model: values.responsesModel,
@@ -39,6 +45,7 @@ function providerPayload(values: Partial<ProviderInput>): Record<string, unknown
     temperature: values.temperature,
     max_output_tokens: values.maxOutputTokens,
     extra_headers: values.extraHeaders,
+    confirm_protocol_change: values.confirmProtocolChange,
   };
 }
 
@@ -47,7 +54,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
     if (response.status === 401) window.dispatchEvent(new Event("vireyabot:unauthorized"));
-    const detail = Array.isArray(body.detail) ? body.detail.map((item: { msg?: string }) => item.msg).filter(Boolean).join("；") : body.detail;
+    const detail = Array.isArray(body.detail) ? body.detail.map((item: { msg?: string; loc?: (string | number)[] }) => `${item.loc?.join(".") || "请求"}：${item.msg || "字段无效"}`).join("；") : body.detail;
     throw new Error(typeof detail === "string" ? detail : "请求失败，请稍后重试");
   }
   return body as T;
@@ -63,6 +70,7 @@ export const api = {
   snowluma: () => request<SnowLumaSettings>("/api/snowluma"),
   saveSnowLuma: (values: Partial<SnowLumaSettings>) => request<{ status: string }>("/api/snowluma", { method: "PUT", body: JSON.stringify(values) }),
   providers: () => request<ProviderConfig[]>("/api/providers"),
-  createProvider: (values: ProviderInput) => request<ProviderConfig>("/api/providers", { method: "POST", body: JSON.stringify(providerPayload(values)) }),
+  providerProtocols: () => request<ProviderProtocols>("/api/provider-protocols"),
+  createProvider: (values: Partial<ProviderInput>) => request<ProviderConfig>("/api/providers", { method: "POST", body: JSON.stringify(providerPayload(values)) }),
   updateProvider: (providerId: string, values: Partial<ProviderInput>) => request<ProviderConfig>(`/api/providers/${encodeURIComponent(providerId)}`, { method: "PUT", body: JSON.stringify(providerPayload(values)) }),
 };
