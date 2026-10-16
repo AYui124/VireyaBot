@@ -491,6 +491,12 @@ class OpenAIChatCompletionsProvider(OpenAIResponsesProvider):
 
     async def responses(self, request: ResponseRequest, *, trace_id: str) -> ResponseResult:
         _validate_request(request, trace_id)
+        if self.config.default_stream:
+            events = [event async for event in self.stream_responses(request, trace_id=trace_id)]
+            text = "".join(event.delta or "" for event in events)
+            usage_event = next((event for event in events if event.event_type == "usage" and event.output), None)
+            usage = json.loads(usage_event.output.text) if usage_event and usage_event.output and usage_event.output.text else {}
+            return ResponseResult(trace_id=trace_id, id="", output_text=text, output=[ProviderOutput(type="message", text=text)], usage=usage)
         if _has_image_input(request.input):
             raise _failure(trace_id, ProviderErrorCode.INVALID_REQUEST, "image input is not supported by this Provider", retryable=False)
         try:
@@ -537,7 +543,7 @@ class OpenAIChatCompletionsProvider(OpenAIResponsesProvider):
             kwargs["temperature"] = self.config.temperature
         stream: Any = None
         finished = False
-        usage_seen = False
+        tool_calls: dict[int, dict[str, str]] = {}
         try:
             stream = await self._client.chat.completions.create(**kwargs)
             async for raw_chunk in stream:
@@ -558,12 +564,20 @@ class OpenAIChatCompletionsProvider(OpenAIResponsesProvider):
                     call_dict = _dump(call)
                     function = _dict(call_dict.get("function"))
                     if function:
-                        call_id = str(call_dict.get("id", ""))
-                        yield StreamEvent(trace_id=trace_id, event_type="response.tool_call.delta", output=ProviderOutput(type="tool_call", id=call_id, call_id=call_id, name=function.get("name"), arguments=function.get("arguments", "")))
+                        index = int(call_dict.get("index", len(tool_calls)))
+                        current = tool_calls.setdefault(index, {"id": "", "name": "", "arguments": ""})
+                        if call_dict.get("id"):
+                            current["id"] = str(call_dict["id"])
+                        if function.get("name"):
+                            current["name"] = str(function["name"])
+                        current["arguments"] += str(function.get("arguments", ""))
+                        yield StreamEvent(trace_id=trace_id, event_type="response.tool_call.delta", output=ProviderOutput(type="tool_call", id=current["id"], call_id=current["id"], name=current["name"] or None, arguments=str(function.get("arguments", ""))))
                 if choice.get("finish_reason"):
                     finished = True
             if not finished:
                 raise _failure(trace_id, ProviderErrorCode.UNAVAILABLE, "provider stream ended unexpectedly", retryable=True)
+            for current in tool_calls.values():
+                yield StreamEvent(trace_id=trace_id, event_type="response.tool_call.completed", output=ProviderOutput(type="tool_call", id=current["id"], call_id=current["id"], name=current["name"] or None, arguments=current["arguments"]))
             if not usage_seen:
                 yield StreamEvent(trace_id=trace_id, event_type="usage", output=ProviderOutput(type="usage", text="{}"))
             yield StreamEvent(trace_id=trace_id, event_type="response.completed")
@@ -584,7 +598,8 @@ class AnthropicMessagesProvider(OpenAIChatCompletionsProvider):
 
     def __init__(self, config: ProviderConfig, *, client: httpx.AsyncClient | None = None) -> None:
         self.config = config
-        self._client = AsyncAnthropic(api_key=config.api_key, base_url=config.base_url, timeout=config.timeout_seconds, max_retries=0, default_headers=config.extra_headers or None, http_client=client)
+        anthropic_base_url = config.base_url.removesuffix("/v1")
+        self._client = AsyncAnthropic(api_key=config.api_key, base_url=anthropic_base_url, timeout=config.timeout_seconds, max_retries=0, default_headers=config.extra_headers or None, http_client=client)
         self._http_client = client
         self._owns_http_client = client is None
 
@@ -594,6 +609,12 @@ class AnthropicMessagesProvider(OpenAIChatCompletionsProvider):
 
     async def responses(self, request: ResponseRequest, *, trace_id: str) -> ResponseResult:
         _validate_request(request, trace_id)
+        if self.config.default_stream:
+            events = [event async for event in self.stream_responses(request, trace_id=trace_id)]
+            text = "".join(event.delta or "" for event in events)
+            usage_event = next((event for event in events if event.event_type == "usage" and event.output), None)
+            usage = json.loads(usage_event.output.text) if usage_event and usage_event.output and usage_event.output.text else {}
+            return ResponseResult(trace_id=trace_id, id="", output_text=text, output=[ProviderOutput(type="message", text=text)], usage=usage)
         if request.response_format is not None or _has_image_input(request.input):
             raise _failure(trace_id, ProviderErrorCode.INVALID_REQUEST, "requested capability is not supported by this Provider", retryable=False)
         system, messages = _anthropic_messages(request)
