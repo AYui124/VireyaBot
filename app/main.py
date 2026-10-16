@@ -6,7 +6,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -59,7 +59,7 @@ class SnowLumaRequest(BaseModel):
 
 
 class ProviderCreateRequest(BaseModel):
-    name: str = Field(min_length=1, max_length=120)
+    model_config = ConfigDict(extra="forbid")
     protocol_type: Literal["openai_responses", "openai_chat_completions", "anthropic_messages"] = "openai_responses"
     base_url: str = Field(min_length=1, max_length=500)
     timeout_seconds: float = Field(gt=0, le=600)
@@ -70,10 +70,13 @@ class ProviderCreateRequest(BaseModel):
     embedding_model: str = ""
     embedding_dimensions: int | None = Field(default=None, gt=0)
     native_search_enabled: bool = False
+    default_stream: bool = False
+    max_output_tokens: int = Field(default=4096, ge=1, le=32768)
+    extra_headers: dict[str, StrictStr] = Field(default_factory=dict, max_length=32)
 
 
 class ProviderUpdateRequest(BaseModel):
-    name: str | None = Field(default=None, min_length=1, max_length=120)
+    model_config = ConfigDict(extra="forbid")
     protocol_type: Literal["openai_responses", "openai_chat_completions", "anthropic_messages"] | None = None
     base_url: str | None = Field(default=None, min_length=1, max_length=500)
     timeout_seconds: float | None = Field(default=None, gt=0, le=600)
@@ -84,6 +87,9 @@ class ProviderUpdateRequest(BaseModel):
     embedding_model: str | None = Field(default=None, min_length=1, max_length=160)
     embedding_dimensions: int | None = Field(default=None, gt=0)
     native_search_enabled: bool | None = None
+    default_stream: bool | None = None
+    max_output_tokens: int | None = Field(default=None, ge=1, le=32768)
+    extra_headers: dict[str, StrictStr] | None = Field(default=None, max_length=32)
 
 
 def current_user(request: Request) -> str:

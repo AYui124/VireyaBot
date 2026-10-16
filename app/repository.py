@@ -167,6 +167,26 @@ def _validate_provider_secret(value: object) -> None:
     if len(value) > 4096:
         raise ValueError("api_key exceeds the maximum permitted length")
 
+def _validate_provider_runtime_options(values: Mapping[str, object]) -> None:
+    default_stream = values.get("default_stream")
+    temperature = values.get("temperature")
+    max_output_tokens = values.get("max_output_tokens")
+    headers = values.get("extra_headers")
+    if not isinstance(default_stream, bool):
+        raise TypeError("default_stream must be boolean")
+    if not isinstance(max_output_tokens, int) or isinstance(max_output_tokens, bool) or not 1 <= max_output_tokens <= 32768:
+        raise ValueError("max_output_tokens must be between 1 and 32768")
+    if temperature is not None and (not isinstance(temperature, (int, float)) or isinstance(temperature, bool) or temperature < 0 or temperature > 2):
+        raise ValueError("temperature must be between 0 and 2")
+    if not isinstance(headers, Mapping):
+        raise TypeError("extra_headers must be an object")
+    for key, value in headers.items():
+        if not isinstance(key, str) or not key.strip() or len(key) > 160:
+            raise ValueError("extra_headers contains an invalid header name")
+        if not isinstance(value, str) or len(value) > 4096:
+            raise ValueError("extra_headers contains an invalid header value")
+
+
 def _validate_provider_values(values: Mapping[str, object]) -> None:
     protocol_type = values.get("protocol_type")
     base_url = values.get("base_url")
@@ -203,6 +223,7 @@ def _validate_provider_values(values: Mapping[str, object]) -> None:
 
 def _provider_public(provider: Provider, secret: ProviderSecret | None, model: ProviderModelConfig | None) -> dict[str, object]:
     anthropic = provider.protocol_type == "anthropic_messages"
+    configured_headers = bool(secret and secret.extra_headers)
     return {
         "providerId": provider.provider_id,
         "name": provider.name,
@@ -216,6 +237,10 @@ def _provider_public(provider: Provider, secret: ProviderSecret | None, model: P
         "embeddingModel": "" if anthropic else (model.embedding_model if model else ""),
         "embeddingDimensions": None if anthropic else (model.embedding_dimensions if model else None),
         "nativeSearchEnabled": False if anthropic else bool(model and model.native_search_enabled),
+        "defaultStream": bool(model and model.default_stream),
+        "temperature": model.temperature if model else None,
+        "maxOutputTokens": model.max_output_tokens if model else 4096,
+        "extraHeadersConfigured": configured_headers,
     }
 
 
@@ -286,7 +311,11 @@ async def read_provider_runtime_settings(session: AsyncSession, provider_id: str
         "embedding_dimensions": model.embedding_dimensions,
         "timeout_seconds": provider.timeout_seconds,
         "organization": provider.organization,
+        "max_output_tokens": model.max_output_tokens,
         "native_search_enabled": model.native_search_enabled,
+        "default_stream": model.default_stream,
+        "temperature": model.temperature,
+        "extra_headers": json.loads(decrypt(secret.extra_headers) if secret.extra_headers else "{}"),
     }
 
 
@@ -296,13 +325,15 @@ def _new_provider_id() -> str:
 
 async def create_provider_config(session: AsyncSession, values: Mapping[str, object], username: str) -> dict[str, object]:
     _validate_provider_secret(values.get("api_key"))
-    candidate = {"name": values.get("name"), "protocol_type": values.get("protocol_type", "openai_responses"), "base_url": values.get("base_url"), "timeout_seconds": values.get("timeout_seconds"), "organization": values.get("organization", ""), "enabled": values.get("enabled", True), "responses_model": values.get("responses_model"), "embedding_model": values.get("embedding_model"), "embedding_dimensions": values.get("embedding_dimensions"), "native_search_enabled": values.get("native_search_enabled", False)}
+    runtime = {"default_stream": values.get("default_stream", False), "temperature": values.get("temperature"), "max_output_tokens": values.get("max_output_tokens", 4096), "extra_headers": values.get("extra_headers", {})}
+    _validate_provider_runtime_options(runtime)
+    candidate = {"name": values.get("name"), "protocol_type": values.get("protocol_type", "openai_responses"), "base_url": values.get("base_url"), "timeout_seconds": values.get("timeout_seconds"), "organization": values.get("organization", ""), "enabled": values.get("enabled", True), "responses_model": values.get("responses_model"), "embedding_model": values.get("embedding_model", ""), "embedding_dimensions": values.get("embedding_dimensions"), "native_search_enabled": values.get("native_search_enabled", False)}
     _validate_provider_values(candidate)
     provider = Provider(provider_id=_new_provider_id(), name=candidate["name"], protocol_type=candidate["protocol_type"], base_url=candidate["base_url"], timeout_seconds=candidate["timeout_seconds"], organization=candidate["organization"], enabled=candidate["enabled"])
     session.add(provider)
     await session.flush()
-    session.add(ProviderSecret(provider_id=provider.id, api_key=encrypt(str(values.get("api_key") or ""))))
-    model = ProviderModelConfig(provider_id=provider.id, responses_model=candidate["responses_model"], embedding_model=candidate["embedding_model"], embedding_dimensions=candidate["embedding_dimensions"], native_search_enabled=candidate["native_search_enabled"])
+    session.add(ProviderSecret(provider_id=provider.id, api_key=encrypt(str(values.get("api_key") or "")), extra_headers=encrypt(json.dumps(runtime["extra_headers"], ensure_ascii=False))))
+    model = ProviderModelConfig(provider_id=provider.id, responses_model=candidate["responses_model"], embedding_model=candidate["embedding_model"], embedding_dimensions=candidate["embedding_dimensions"], native_search_enabled=candidate["native_search_enabled"], default_stream=runtime["default_stream"], temperature=runtime["temperature"], max_output_tokens=runtime["max_output_tokens"])
     session.add(model)
     session.add(ConfigChange(key=f"provider:{provider.provider_id}", admin_username=username, action="create"))
     await session.commit()
@@ -318,21 +349,18 @@ async def update_provider_config(session: AsyncSession, provider_id: str, values
     model = await session.scalar(select(ProviderModelConfig).where(ProviderModelConfig.provider_id == provider.id))
     if secret is None or model is None:
         raise ValueError("Provider configuration is incomplete")
+    runtime = {"default_stream": values.get("default_stream", model.default_stream), "temperature": values.get("temperature", model.temperature), "max_output_tokens": values.get("max_output_tokens", model.max_output_tokens), "extra_headers": values.get("extra_headers", json.loads(decrypt(secret.extra_headers) or "{}"))}
+    _validate_provider_runtime_options(runtime)
     candidate = {"name": values.get("name", provider.name), "protocol_type": values.get("protocol_type", provider.protocol_type), "base_url": values.get("base_url", provider.base_url), "timeout_seconds": values.get("timeout_seconds", provider.timeout_seconds), "organization": values.get("organization", provider.organization), "enabled": values.get("enabled", provider.enabled), "responses_model": values.get("responses_model", model.responses_model), "embedding_model": values.get("embedding_model", model.embedding_model), "embedding_dimensions": values.get("embedding_dimensions", model.embedding_dimensions), "native_search_enabled": values.get("native_search_enabled", model.native_search_enabled)}
     _validate_provider_values(candidate)
-    provider.name = candidate["name"]
-    provider.protocol_type = candidate["protocol_type"]
-    provider.base_url = candidate["base_url"]
-    provider.timeout_seconds = candidate["timeout_seconds"]
-    provider.organization = candidate["organization"]
-    provider.enabled = candidate["enabled"]
-    model.responses_model = candidate["responses_model"]
-    model.embedding_model = candidate["embedding_model"]
-    model.embedding_dimensions = candidate["embedding_dimensions"]
-    model.native_search_enabled = candidate["native_search_enabled"]
-    api_key = values.get("api_key")
-    if api_key is not None and api_key not in {"", MASKED_SECRET}:
-        secret.api_key = encrypt(str(api_key))
+    provider.name, provider.protocol_type, provider.base_url = candidate["name"], candidate["protocol_type"], candidate["base_url"]
+    provider.timeout_seconds, provider.organization, provider.enabled = candidate["timeout_seconds"], candidate["organization"], candidate["enabled"]
+    model.responses_model, model.embedding_model = candidate["responses_model"], candidate["embedding_model"]
+    model.embedding_dimensions, model.native_search_enabled = candidate["embedding_dimensions"], candidate["native_search_enabled"]
+    model.default_stream, model.temperature, model.max_output_tokens = runtime["default_stream"], runtime["temperature"], runtime["max_output_tokens"]
+    if values.get("api_key") not in {None, "", MASKED_SECRET}:
+        secret.api_key = encrypt(str(values["api_key"]))
+    secret.extra_headers = encrypt(json.dumps(runtime["extra_headers"], ensure_ascii=False))
     session.add(ConfigChange(key=f"provider:{provider_id}", admin_username=username, action="update"))
     await session.commit()
     return _provider_public(provider, secret, model)

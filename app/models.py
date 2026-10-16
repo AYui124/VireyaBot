@@ -54,6 +54,7 @@ class ProviderSecret(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     provider_id: Mapped[int] = mapped_column(ForeignKey("providers.id", ondelete="CASCADE"), unique=True, index=True)
     api_key: Mapped[str] = mapped_column(Text)
+    extra_headers: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -66,5 +67,8 @@ class ProviderModelConfig(Base):
     embedding_model: Mapped[str] = mapped_column(String(160))
     embedding_dimensions: Mapped[int | None] = mapped_column(Integer, nullable=True)
     native_search_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    default_stream: Mapped[bool] = mapped_column(Boolean, default=False)
+    temperature: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_output_tokens: Mapped[int] = mapped_column(Integer, default=4096)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

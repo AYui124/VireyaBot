@@ -15,8 +15,12 @@ export type ProviderConfig = {
   embeddingModel: string;
   embeddingDimensions: number | null;
   nativeSearchEnabled: boolean;
+  defaultStream: boolean;
+  temperature: number | null;
+  maxOutputTokens: number;
+  extraHeadersConfigured: boolean;
 };
-export type ProviderInput = Omit<ProviderConfig, "providerId" | "apiKeyConfigured"> & { apiKey?: string };
+export type ProviderInput = Omit<ProviderConfig, "providerId" | "apiKeyConfigured" | "extraHeadersConfigured"> & { apiKey?: string; extraHeaders?: Record<string, string> }
 
 function providerPayload(values: Partial<ProviderInput>): Record<string, unknown> {
   return {
@@ -31,6 +35,10 @@ function providerPayload(values: Partial<ProviderInput>): Record<string, unknown
     embedding_model: values.embeddingModel,
     embedding_dimensions: values.embeddingDimensions,
     native_search_enabled: values.nativeSearchEnabled,
+    default_stream: values.defaultStream,
+    temperature: values.temperature,
+    max_output_tokens: values.maxOutputTokens,
+    extra_headers: values.extraHeaders,
   };
 }
 

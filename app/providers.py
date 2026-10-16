@@ -61,6 +61,10 @@ class ProviderConfig:
     native_search_enabled: bool = False
     embedding_dimensions: int | None = None
     protocol_type: str = "openai_responses"
+    default_stream: bool = False
+    temperature: float | None = None
+    max_output_tokens: int = 4096
+    extra_headers: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.base_url.startswith(("http://", "https://")):
@@ -362,7 +366,7 @@ class OpenAIResponsesProvider:
         self.config = config
         self._http_client = client
         self._owns_http_client = client is None
-        self._client = AsyncOpenAI(api_key=config.api_key, organization=config.organization, base_url=config.base_url, timeout=config.timeout_seconds, max_retries=0, http_client=client)
+        self._client = AsyncOpenAI(api_key=config.api_key, organization=config.organization, base_url=config.base_url, timeout=config.timeout_seconds, max_retries=0, default_headers=config.extra_headers or None, http_client=client)
         if config.native_search_enabled:
             self.capabilities = self.capabilities | {ProviderCapability.NATIVE_WEB_SEARCH}
 
@@ -381,10 +385,19 @@ class OpenAIResponsesProvider:
             kwargs["text"] = {"format": request.response_format}
         if request.tools:
             kwargs["tools"] = request.tools
+        if self.config.temperature is not None:
+            kwargs["temperature"] = self.config.temperature
+        kwargs["max_output_tokens"] = self.config.max_output_tokens
         return kwargs
 
     async def responses(self, request: ResponseRequest, *, trace_id: str) -> ResponseResult:
         _validate_request(request, trace_id)
+        if self.config.default_stream:
+            events = [event async for event in self.stream_responses(request, trace_id=trace_id)]
+            text = "".join(event.delta or "" for event in events)
+            usage_event = next((event for event in events if event.event_type == "usage" and event.output), None)
+            usage = json.loads(usage_event.output.text) if usage_event and usage_event.output and usage_event.output.text else {}
+            return ResponseResult(trace_id=trace_id, id="", output_text=text, output=[ProviderOutput(type="message", text=text)], usage=usage)
         try:
             value = _dump(await self._client.responses.create(**self._request_kwargs(request)))
             return _response_result(value, trace_id=trace_id)
@@ -398,7 +411,9 @@ class OpenAIResponsesProvider:
         stream: Any = None
         completed = False
         try:
-            stream = await self._client.responses.create(**(self._request_kwargs(request) | {"stream": True}))
+            stream_kwargs = self._request_kwargs(request)
+            stream_kwargs["stream"] = True
+            stream = await self._client.responses.create(**stream_kwargs)
             async for raw_event in stream:
                 data = _dump(raw_event)
                 event_type = str(data.get("type", "message"))
@@ -479,9 +494,11 @@ class OpenAIChatCompletionsProvider(OpenAIResponsesProvider):
         if _has_image_input(request.input):
             raise _failure(trace_id, ProviderErrorCode.INVALID_REQUEST, "image input is not supported by this Provider", retryable=False)
         try:
-            kwargs: dict[str, Any] = {"model": request.model or self.config.responses_model, "messages": _chat_messages(request)}
+            kwargs: dict[str, Any] = {"model": request.model or self.config.responses_model, "messages": _chat_messages(request), "max_completion_tokens": self.config.max_output_tokens}
             if request.response_format is not None:
                 kwargs["response_format"] = request.response_format
+            if self.config.temperature is not None:
+                kwargs["temperature"] = self.config.temperature
             if request.tools:
                 kwargs["tools"] = _chat_tools(request.tools)
             value = _dump(await self._client.chat.completions.create(**kwargs))
@@ -516,6 +533,8 @@ class OpenAIChatCompletionsProvider(OpenAIResponsesProvider):
             kwargs["response_format"] = request.response_format
         if request.tools:
             kwargs["tools"] = _chat_tools(request.tools)
+        if self.config.temperature is not None:
+            kwargs["temperature"] = self.config.temperature
         stream: Any = None
         finished = False
         usage_seen = False
@@ -565,9 +584,9 @@ class AnthropicMessagesProvider(OpenAIChatCompletionsProvider):
 
     def __init__(self, config: ProviderConfig, *, client: httpx.AsyncClient | None = None) -> None:
         self.config = config
+        self._client = AsyncAnthropic(api_key=config.api_key, base_url=config.base_url, timeout=config.timeout_seconds, max_retries=0, default_headers=config.extra_headers or None, http_client=client)
         self._http_client = client
         self._owns_http_client = client is None
-        self._client = AsyncAnthropic(api_key=config.api_key, base_url=config.base_url, timeout=config.timeout_seconds, max_retries=0, http_client=client)
 
     async def _close(self) -> None:
         if self._owns_http_client:
@@ -579,9 +598,11 @@ class AnthropicMessagesProvider(OpenAIChatCompletionsProvider):
             raise _failure(trace_id, ProviderErrorCode.INVALID_REQUEST, "requested capability is not supported by this Provider", retryable=False)
         system, messages = _anthropic_messages(request)
         try:
-            kwargs: dict[str, Any] = {"model": request.model or self.config.responses_model, "max_tokens": 4096, "messages": messages}
+            kwargs: dict[str, Any] = {"model": request.model or self.config.responses_model, "max_tokens": self.config.max_output_tokens, "messages": messages}
             if system:
                 kwargs["system"] = system
+            if self.config.temperature is not None:
+                kwargs["temperature"] = self.config.temperature
             if request.tools:
                 kwargs["tools"] = _anthropic_tools(request.tools)
             value = _dump(await self._client.messages.create(**kwargs))
@@ -608,9 +629,11 @@ class AnthropicMessagesProvider(OpenAIChatCompletionsProvider):
         if request.response_format is not None or _has_image_input(request.input):
             raise _failure(trace_id, ProviderErrorCode.INVALID_REQUEST, "requested capability is not supported by this Provider", retryable=False)
         system, messages = _anthropic_messages(request)
-        kwargs: dict[str, Any] = {"model": request.model or self.config.responses_model, "max_tokens": 4096, "messages": messages, "stream": True}
+        kwargs: dict[str, Any] = {"model": request.model or self.config.responses_model, "max_tokens": self.config.max_output_tokens, "messages": messages, "stream": True}
         if system:
             kwargs["system"] = system
+        if self.config.temperature is not None:
+            kwargs["temperature"] = self.config.temperature
         if request.tools:
             kwargs["tools"] = _anthropic_tools(request.tools)
         stream: Any = None
