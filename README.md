@@ -31,7 +31,7 @@ React 单页管理控制台使用仓库内锁定的 React、TypeScript、Tailwin
 
 真实浏览器回归覆盖桌面/窄屏、焦点、加载、成功、失败和重复提交路径。测试只使用合成账号与 Token。
 
-`/`、`/settings` 和 `/snowluma` 均由 FastAPI 提供同一个前端入口，API 仍由 `/api/*` 提供。React Flow 画布属于后续工作流任务，本阶段不引入无用途依赖或假画布。
+`/`、`/settings`、`/providers` 和 `/snowluma` 均由 FastAPI 提供同一个前端入口，API 仍由 `/api/*` 提供。React Flow 画布属于后续工作流任务，本阶段不引入无用途依赖或假画布。
 
 ## 配置边界
 
@@ -60,6 +60,12 @@ React 单页管理控制台使用仓库内锁定的 React、TypeScript、Tailwin
 ## Provider 协议边界
 
 Responses、多模态、流式事件、结构化输出、工具调用、可选原生 Web Search 和批量 Embedding 通过 `app.providers.ModelProvider` 统一；Provider 失败映射为带 trace 的稳定 `Failure`。接口支持矩阵、配置字段、脱敏证据和真实参数缺口见 [`docs/provider-validation-v1.md`](docs/provider-validation-v1.md)。当前测试使用本地 HTTP 仿真，不将仿真结果描述为真实 Provider 验收。
+
+### Provider 管理页面
+
+管理员登录后访问 `/providers` 管理多条独立 Provider 配置。每条记录拥有稳定 `providerId`，可分别新增、编辑、启用/停用和复制引用；API key 只显示是否已配置，留空编辑保留已有密钥。配置表拆分为 Provider 连接资源、加密 secret 资源和模型能力资源，运行时必须通过 `build_provider(session, provider_id)` 按 ID 解析，不会静默切换其他 Provider。
+
+迁移 `0002_provider_resources` 创建多 Provider 表。旧的单套 `provider.*` PostgreSQL 配置在首次 bootstrap 时迁移为稳定默认 Provider 并删除旧设置行；新空库保持可理解空状态。页面保存不会连接或调用真实服务。Docker 发布使用不可变修订号镜像，先执行 `alembic upgrade head`，再启动应用；本任务不更新长期实例。
 
 ### NoneBot2 兼容性结论
 
