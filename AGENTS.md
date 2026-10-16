@@ -62,17 +62,14 @@ VireyaBot is a Python AI agent platform centered on QQ through SnowLuma / OneBot
 
 ## Git delivery workflow
 
-- `/opt/projects/VireyaBot` is the primary development repository and permanently checks out the `dev` integration branch. It is the base for all task worktrees and the only place where task branches are merged into `dev`.
-- Before editing implementation files, every task must create or reuse a dedicated worktree from `dev` at `/opt/projects/VireyaBot-worktrees/<issue-or-purpose>`. Do not implement a task directly in `/opt/projects/VireyaBot`.
-- `/opt/projects/VireyaBot-worktrees` is the only allowed root for project task, policy, and recovery worktrees. Do not create VireyaBot worktrees beside the repository, in another `/opt` path, or in a user home directory.
-- Multica's local-directory resource intentionally uses `in_place` mode so the platform enters `/opt/projects/VireyaBot` without creating daemon-managed worktrees elsewhere. Tasks are serialized at the resource boundary and must create their own worktree under the fixed root before editing.
-- A task is not complete until all intended changes are committed. Never leave the deliverable only as uncommitted work in a worktree.
-- After verification, merge the task branch into `dev` in `/opt/projects/VireyaBot`. Use a non-fast-forward merge when practical so the task boundary remains visible.
-- Resolve integration conflicts in `/opt/projects/VireyaBot`; do not rewrite or discard unrelated user changes.
+- `/opt/projects/VireyaBot` is the human-visible `dev` integration repository. Agent tasks do not edit it directly.
+- Multica's local-directory resource uses `execution_mode: worktree`. Each task receives an isolated daemon-managed worktree and branch automatically; agents must use the work directory supplied by the runtime.
+- Do not create or manage additional project worktrees manually. Do not move, rename, or delete daemon-managed task worktrees while their tasks or conversations may continue.
+- A task is not complete until all intended changes are committed on its task branch. Never leave the deliverable only as uncommitted work.
+- After verification, integrate the committed task branch into `dev` without discarding unrelated changes. Use a non-fast-forward merge when practical so the task boundary remains visible.
 - Push the integrated `dev` branch to `origin/dev`, then create or update a pull request from `dev` into `main`. The pull request is the review handoff and must include the relevant Multica issue key.
 - NEVER push directly to `origin/main`. NEVER force-push `main` or `dev`. NEVER merge the pull request into `main` unless the user explicitly authorizes that merge.
-- Do not treat pushing an individual task branch as delivery. The canonical delivered state is the committed local `dev` branch, its matching `origin/dev`, and the open `dev` → `main` pull request.
-- If another task is running or `/opt/projects/VireyaBot` is not clean, coordinate and wait rather than merging over active work.
+- Do not treat pushing an individual task branch as delivery. The canonical delivered state is the committed task branch, its integration into `dev`, the matching `origin/dev`, and the open `dev` → `main` pull request.
 
 ## Change discipline
 

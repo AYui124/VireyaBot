@@ -7,8 +7,9 @@ RUN npm run build
 
 FROM python:3.12-slim
 
-ARG DEBIAN_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/debian
 ARG DEBIAN_SECURITY_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/debian-security
+ARG DEBIAN_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/debian
+ARG PYPI_MIRROR=https://pypi.tuna.tsinghua.edu.cn/simple
 
 RUN set -eux; \
     sed -i \
@@ -19,12 +20,14 @@ RUN set -eux; \
     apt-get install -y --no-install-recommends ca-certificates curl; \
     rm -rf /var/lib/apt/lists/*
 
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 UV_PROJECT_ENVIRONMENT=/opt/venv
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 UV_PROJECT_ENVIRONMENT=/opt/venv UV_INDEX_URL=${PYPI_MIRROR}
 WORKDIR /app
 
 COPY --from=ghcr.io/astral-sh/uv:0.5.26 /uv /uvx /bin/
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
+RUN uv export --frozen --no-dev --format requirements-txt > /tmp/requirements.txt; \
+    uv pip install --system --index-url "${PYPI_MIRROR}" -r /tmp/requirements.txt; \
+    rm /tmp/requirements.txt
 
 COPY app ./app
 COPY alembic.ini .

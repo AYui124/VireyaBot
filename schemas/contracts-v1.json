@@ -1,0 +1,1509 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vireyabot.local/schemas/contracts-v1.json",
+  "$defs": {
+    "AuditRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "v1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "actor": {
+          "$ref": "#/$defs/Principal"
+        },
+        "action": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Action",
+          "type": "string"
+        },
+        "resource_type": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Resource Type",
+          "type": "string"
+        },
+        "resource_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Resource Id",
+          "type": "string"
+        },
+        "outcome": {
+          "enum": [
+            "allowed",
+            "denied",
+            "failed"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "error_code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Code"
+        }
+      },
+      "required": [
+        "schema_version",
+        "id",
+        "actor",
+        "action",
+        "resource_type",
+        "resource_id",
+        "outcome"
+      ],
+      "title": "AuditRecord",
+      "type": "object"
+    },
+    "ConversationKind": {
+      "enum": [
+        "private",
+        "group"
+      ],
+      "title": "ConversationKind",
+      "type": "string"
+    },
+    "ConversationRef": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "v1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ConversationKind"
+        },
+        "user_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "User Id"
+        },
+        "group_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Group Id"
+        }
+      },
+      "required": [
+        "schema_version",
+        "id",
+        "kind"
+      ],
+      "title": "ConversationRef",
+      "type": "object"
+    },
+    "DataScope": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "v1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/DataScopeKind"
+        },
+        "user_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "User Id"
+        },
+        "group_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Group Id"
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind"
+      ],
+      "title": "DataScope",
+      "type": "object"
+    },
+    "DataScopeKind": {
+      "enum": [
+        "private",
+        "group",
+        "global"
+      ],
+      "title": "DataScopeKind",
+      "type": "string"
+    },
+    "ExecutionContext": {
+      "additionalProperties": false,
+      "description": "Engine-supplied context pinned for one component invocation.",
+      "properties": {
+        "schema_version": {
+          "const": "v1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "actor": {
+          "$ref": "#/$defs/Principal"
+        },
+        "conversation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConversationRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "scope": {
+          "$ref": "#/$defs/DataScope"
+        },
+        "workflow_version_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Workflow Version Id",
+          "type": "string"
+        },
+        "component_ref": {
+          "pattern": "^[a-z][a-z0-9_.-]{1,63}@0\\.[0-9]+\\.[0-9]+/[a-zA-Z][a-zA-Z0-9_.-]{0,63}$",
+          "title": "Component Ref",
+          "type": "string"
+        },
+        "capabilities": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Capabilities",
+          "type": "array"
+        }
+      },
+      "required": [
+        "schema_version",
+        "actor",
+        "scope",
+        "workflow_version_id",
+        "component_ref"
+      ],
+      "title": "ExecutionContext",
+      "type": "object"
+    },
+    "Failure": {
+      "additionalProperties": false,
+      "description": "Safe, machine-readable failure shared by runner-facing contracts.",
+      "properties": {
+        "schema_version": {
+          "const": "v1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "trace_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Trace Id",
+          "type": "string"
+        },
+        "error_code": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Error Code",
+          "type": "string"
+        },
+        "retryable": {
+          "title": "Retryable",
+          "type": "boolean"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message"
+        }
+      },
+      "required": [
+        "schema_version",
+        "trace_id",
+        "error_code",
+        "retryable"
+      ],
+      "title": "Failure",
+      "type": "object"
+    },
+    "ImageSegment": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "v1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "type": {
+          "const": "image",
+          "title": "Type",
+          "type": "string"
+        },
+        "media": {
+          "$ref": "#/$defs/MediaRef"
+        }
+      },
+      "required": [
+        "schema_version",
+        "type",
+        "media"
+      ],
+      "title": "ImageSegment",
+      "type": "object"
+    },
+    "MediaRef": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "v1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "content_type": {
+          "pattern": "^[!#$%&'*+\\-.^_`|~0-9A-Za-z]+/[!#$%&'*+\\-.^_`|~0-9A-Za-z]+$",
+          "title": "Content Type",
+          "type": "string"
+        },
+        "size_bytes": {
+          "maximum": 10485760,
+          "minimum": 0,
+          "title": "Size Bytes",
+          "type": "integer"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "source_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Url"
+        }
+      },
+      "required": [
+        "schema_version",
+        "id",
+        "content_type",
+        "size_bytes",
+        "sha256"
+      ],
+      "title": "MediaRef",
+      "type": "object"
+    },
+    "MemoryRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "v1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/$defs/DataScope"
+        },
+        "content": {
+          "maxLength": 100000,
+          "minLength": 1,
+          "title": "Content",
+          "type": "string"
+        },
+        "source_session_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Source Session Id",
+          "type": "string"
+        },
+        "embedding_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Embedding Version"
+        }
+      },
+      "required": [
+        "schema_version",
+        "id",
+        "scope",
+        "content",
+        "source_session_id"
+      ],
+      "title": "MemoryRecord",
+      "type": "object"
+    },
+    "MentionSegment": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "v1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "type": {
+          "const": "mention",
+          "title": "Type",
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/Principal"
+        }
+      },
+      "required": [
+        "schema_version",
+        "type",
+        "target"
+      ],
+      "title": "MentionSegment",
+      "type": "object"
+    },
+    "MessageEnvelope": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "v1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "conversation": {
+          "$ref": "#/$defs/ConversationRef"
+        },
+        "sender": {
+          "$ref": "#/$defs/Principal"
+        },
+        "segments": {
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TextSegment"
+              },
+              {
+                "$ref": "#/$defs/ImageSegment"
+              },
+              {
+                "$ref": "#/$defs/MentionSegment"
+              },
+              {
+                "$ref": "#/$defs/ReplySegment"
+              }
+            ]
+          },
+          "maxItems": 100,
+          "minItems": 1,
+          "title": "Segments",
+          "type": "array"
+        },
+        "trace_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Trace Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "id",
+        "occurred_at",
+        "conversation",
+        "sender",
+        "segments",
+        "trace_id"
+      ],
+      "title": "MessageEnvelope",
+      "type": "object"
+    },
+    "NodeInput": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "v1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value"
+        },
+        "context": {
+          "$ref": "#/$defs/ExecutionContext"
+        }
+      },
+      "required": [
+        "schema_version",
+        "name",
+        "value",
+        "context"
+      ],
+      "title": "NodeInput",
+      "type": "object"
+    },
+    "NodeOutput": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "v1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value"
+        },
+        "secret": {
+          "default": false,
+          "title": "Secret",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "schema_version",
+        "name",
+        "value"
+      ],
+      "title": "NodeOutput",
+      "type": "object"
+    },
+    "NodeRun": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "v1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "run_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Run Id",
+          "type": "string"
+        },
+        "node_id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Node Id",
+          "type": "string"
+        },
+        "trace_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Trace Id",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "queued",
+            "running",
+            "succeeded",
+            "failed",
+            "skipped"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "input": {
+          "items": {
+            "$ref": "#/$defs/NodeInput"
+          },
+          "title": "Input",
+          "type": "array"
+        },
+        "output": {
+          "items": {
+            "$ref": "#/$defs/NodeOutput"
+          },
+          "title": "Output",
+          "type": "array"
+        },
+        "failure": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Failure"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "schema_version",
+        "run_id",
+        "node_id",
+        "trace_id",
+        "status"
+      ],
+      "title": "NodeRun",
+      "type": "object"
+    },
+    "PersonaRef": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "v1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "version_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Version Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "id",
+        "version_id"
+      ],
+      "title": "PersonaRef",
+      "type": "object"
+    },
+    "PluginComponent": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "v1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^[a-zA-Z][a-zA-Z0-9_.-]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "workflow_node",
+          "title": "Kind",
+          "type": "string"
+        },
+        "input_schema_ref": {
+          "pattern": "^urn:vireyabot:[a-z][a-z0-9_.-]{1,63}:v1$",
+          "title": "Input Schema Ref",
+          "type": "string"
+        },
+        "output_schema_ref": {
+          "pattern": "^urn:vireyabot:[a-z][a-z0-9_.-]{1,63}:v1$",
+          "title": "Output Schema Ref",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "id",
+        "kind",
+        "input_schema_ref",
+        "output_schema_ref"
+      ],
+      "title": "PluginComponent",
+      "type": "object"
+    },
+    "PluginManifest": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "v1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "plugin_id": {
+          "pattern": "^[a-z][a-z0-9_.-]{1,63}$",
+          "title": "Plugin Id",
+          "type": "string"
+        },
+        "version": {
+          "pattern": "^0\\.[0-9]+\\.[0-9]+$",
+          "title": "Version",
+          "type": "string"
+        },
+        "api_version": {
+          "const": "v1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "permissions": {
+          "items": {
+            "$ref": "#/$defs/PluginPermission"
+          },
+          "maxItems": 32,
+          "title": "Permissions",
+          "type": "array"
+        },
+        "components": {
+          "items": {
+            "$ref": "#/$defs/PluginComponent"
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "title": "Components",
+          "type": "array"
+        }
+      },
+      "required": [
+        "schema_version",
+        "plugin_id",
+        "version",
+        "api_version",
+        "components"
+      ],
+      "title": "PluginManifest",
+      "type": "object"
+    },
+    "PluginPermission": {
+      "enum": [
+        "web.search",
+        "message.read",
+        "message.write",
+        "memory.read",
+        "memory.write"
+      ],
+      "title": "PluginPermission",
+      "type": "string"
+    },
+    "Principal": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "v1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/PrincipalKind"
+        },
+        "id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "kind",
+        "id"
+      ],
+      "title": "Principal",
+      "type": "object"
+    },
+    "PrincipalKind": {
+      "enum": [
+        "user",
+        "bot",
+        "admin",
+        "system"
+      ],
+      "title": "PrincipalKind",
+      "type": "string"
+    },
+    "ProactivePolicy": {
+      "additionalProperties": false,
+      "description": "Persisted policy snapshot required before a scheduled private send.",
+      "properties": {
+        "schema_version": {
+          "const": "v1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "enabled": {
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "kill_switch": {
+          "title": "Kill Switch",
+          "type": "boolean"
+        },
+        "target_user_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Target User Id",
+          "type": "string"
+        },
+        "workflow_version_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Workflow Version Id",
+          "type": "string"
+        },
+        "quiet_hours": {
+          "default": false,
+          "title": "Quiet Hours",
+          "type": "boolean"
+        },
+        "cooldown_active": {
+          "default": false,
+          "title": "Cooldown Active",
+          "type": "boolean"
+        },
+        "frequency_limit_hit": {
+          "default": false,
+          "title": "Frequency Limit Hit",
+          "type": "boolean"
+        },
+        "explicit_authorization": {
+          "title": "Explicit Authorization",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "schema_version",
+        "enabled",
+        "kill_switch",
+        "target_user_id",
+        "workflow_version_id",
+        "explicit_authorization"
+      ],
+      "title": "ProactivePolicy",
+      "type": "object"
+    },
+    "ReplySegment": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "v1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "type": {
+          "const": "reply",
+          "title": "Type",
+          "type": "string"
+        },
+        "message_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Message Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "type",
+        "message_id"
+      ],
+      "title": "ReplySegment",
+      "type": "object"
+    },
+    "SecretRef": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "v1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "key": {
+          "pattern": "^[a-z][a-z0-9_.-]{1,159}$",
+          "title": "Key",
+          "type": "string"
+        },
+        "owner": {
+          "const": "configuration_service",
+          "title": "Owner",
+          "type": "string"
+        },
+        "exposed_to": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Exposed To",
+          "type": "array"
+        }
+      },
+      "required": [
+        "schema_version",
+        "key",
+        "owner"
+      ],
+      "title": "SecretRef",
+      "type": "object"
+    },
+    "SessionRef": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "v1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "conversation": {
+          "$ref": "#/$defs/ConversationRef"
+        },
+        "persona_version_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Persona Version Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "id",
+        "conversation",
+        "persona_version_id"
+      ],
+      "title": "SessionRef",
+      "type": "object"
+    },
+    "TextSegment": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "v1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "type": {
+          "const": "text",
+          "title": "Type",
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 100000,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "type",
+        "text"
+      ],
+      "title": "TextSegment",
+      "type": "object"
+    },
+    "ToolCall": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "v1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "tool_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Tool Id",
+          "type": "string"
+        },
+        "arguments": {
+          "additionalProperties": true,
+          "title": "Arguments",
+          "type": "object"
+        },
+        "actor": {
+          "$ref": "#/$defs/Principal"
+        },
+        "scope": {
+          "$ref": "#/$defs/DataScope"
+        }
+      },
+      "required": [
+        "schema_version",
+        "id",
+        "tool_id",
+        "arguments",
+        "actor",
+        "scope"
+      ],
+      "title": "ToolCall",
+      "type": "object"
+    },
+    "ToolResult": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "v1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "call_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Call Id",
+          "type": "string"
+        },
+        "trace_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Trace Id",
+          "type": "string"
+        },
+        "ok": {
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "output": {
+          "additionalProperties": true,
+          "title": "Output",
+          "type": "object"
+        },
+        "failure": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Failure"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "schema_version",
+        "call_id",
+        "trace_id",
+        "ok"
+      ],
+      "title": "ToolResult",
+      "type": "object"
+    },
+    "WorkflowDraft": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "v1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "workflow_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Workflow Id",
+          "type": "string"
+        },
+        "owner_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Owner Id",
+          "type": "string"
+        },
+        "revision": {
+          "minimum": 1,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "graph": {
+          "$ref": "#/$defs/WorkflowGraph"
+        }
+      },
+      "required": [
+        "schema_version",
+        "workflow_id",
+        "owner_id",
+        "revision",
+        "graph"
+      ],
+      "title": "WorkflowDraft",
+      "type": "object"
+    },
+    "WorkflowEdge": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "v1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "source": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Source",
+          "type": "string"
+        },
+        "target": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Target",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "source",
+        "target"
+      ],
+      "title": "WorkflowEdge",
+      "type": "object"
+    },
+    "WorkflowGraph": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "v1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "nodes": {
+          "items": {
+            "$ref": "#/$defs/WorkflowNode"
+          },
+          "maxItems": 256,
+          "minItems": 1,
+          "title": "Nodes",
+          "type": "array"
+        },
+        "edges": {
+          "items": {
+            "$ref": "#/$defs/WorkflowEdge"
+          },
+          "maxItems": 1024,
+          "title": "Edges",
+          "type": "array"
+        }
+      },
+      "required": [
+        "schema_version",
+        "nodes"
+      ],
+      "title": "WorkflowGraph",
+      "type": "object"
+    },
+    "WorkflowNode": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "v1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "component_ref": {
+          "pattern": "^[a-z][a-z0-9_.-]{1,63}@0\\.[0-9]+\\.[0-9]+/[a-zA-Z][a-zA-Z0-9_.-]{0,63}$",
+          "title": "Component Ref",
+          "type": "string"
+        },
+        "config": {
+          "additionalProperties": true,
+          "title": "Config",
+          "type": "object"
+        }
+      },
+      "required": [
+        "schema_version",
+        "id",
+        "component_ref"
+      ],
+      "title": "WorkflowNode",
+      "type": "object"
+    },
+    "WorkflowRun": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "v1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "run_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Run Id",
+          "type": "string"
+        },
+        "workflow_version_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Workflow Version Id",
+          "type": "string"
+        },
+        "trigger_message_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trigger Message Id"
+        },
+        "status": {
+          "enum": [
+            "queued",
+            "running",
+            "succeeded",
+            "failed",
+            "cancelled"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "run_id",
+        "workflow_version_id",
+        "status"
+      ],
+      "title": "WorkflowRun",
+      "type": "object"
+    },
+    "WorkflowVersion": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "v1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "workflow_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Workflow Id",
+          "type": "string"
+        },
+        "version_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Version Id",
+          "type": "string"
+        },
+        "owner_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Owner Id",
+          "type": "string"
+        },
+        "graph": {
+          "$ref": "#/$defs/WorkflowGraph"
+        },
+        "published_at": {
+          "format": "date-time",
+          "title": "Published At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "workflow_id",
+        "version_id",
+        "owner_id",
+        "graph",
+        "published_at"
+      ],
+      "title": "WorkflowVersion",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Schema root containing every v1 resource contract as optional entries.",
+  "properties": {
+    "schema_version": {
+      "const": "v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "message": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/MessageEnvelope"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "media": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/MediaRef"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "session": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SessionRef"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "persona": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PersonaRef"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "tool_call": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ToolCall"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "tool_result": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ToolResult"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "memory": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/MemoryRecord"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "plugin_manifest": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PluginManifest"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "workflow_graph": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WorkflowGraph"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "workflow_draft": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WorkflowDraft"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "workflow_version": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WorkflowVersion"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "workflow_run": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WorkflowRun"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "node_run": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NodeRun"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "proactive_policy": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ProactivePolicy"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "secret_ref": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SecretRef"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "audit_record": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AuditRecord"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "schema_version"
+  ],
+  "title": "ContractCatalog",
+  "type": "object"
+}

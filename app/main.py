@@ -2,7 +2,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -10,13 +11,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import engine, get_session, session_factory
+from app.provider_settings import PROVIDER_PROTOCOLS, ProviderCreateRequest, ProviderUpdateRequest
 from app.repository import (
     authenticate,
     bootstrap,
+    create_provider_config,
+    delete_provider_config,
+    list_provider_configs,
     read_settings,
     read_snowluma_settings,
     save_settings,
     save_snowluma_settings,
+    update_provider_config,
 )
 from app.security import make_session, session_username
 
@@ -30,6 +36,11 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="VireyaBot", version=settings.vireyabot_version, lifespan=lifespan)
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_response(_: Request, exc: RequestValidationError) -> JSONResponse:
+    detail = [{"loc": list(error.get("loc", ())), "msg": error.get("msg", "Invalid request"), "type": error.get("type", "value_error")} for error in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": detail})
 
 
 class LoginRequest(BaseModel):
@@ -46,6 +57,8 @@ class SnowLumaRequest(BaseModel):
     websocket_url: str = ""
     http_url: str = ""
     token: str | None = None
+
+
 
 
 def current_user(request: Request) -> str:
@@ -81,6 +94,11 @@ async def snowluma_page() -> FileResponse | HTMLResponse:
 
 @app.get("/settings", response_class=HTMLResponse, response_model=None)
 async def settings_page() -> FileResponse | HTMLResponse:
+    return frontend_file()
+
+
+@app.get("/providers", response_class=HTMLResponse, response_model=None)
+async def providers_page() -> FileResponse | HTMLResponse:
     return frontend_file()
 
 
@@ -125,6 +143,42 @@ async def logout(response: Response) -> dict[str, str]:
 @app.get("/api/me")
 async def me(username: str = Depends(current_user)) -> dict[str, str]:
     return {"username": username}
+
+
+@app.get("/api/provider-protocols")
+async def get_provider_protocols(_: str = Depends(current_user)) -> dict[str, object]:
+    return PROVIDER_PROTOCOLS
+
+
+@app.get("/api/providers")
+async def get_providers(_: str = Depends(current_user), session: AsyncSession = Depends(get_session)) -> list[dict[str, object]]:
+    return await list_provider_configs(session)
+
+
+@app.post("/api/providers")
+async def post_provider(payload: ProviderCreateRequest, username: str = Depends(current_user), session: AsyncSession = Depends(get_session)) -> dict[str, object]:
+    try:
+        return await create_provider_config(session, payload.model_dump(exclude_unset=True), username)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+
+
+@app.put("/api/providers/{provider_id}")
+async def put_provider(provider_id: str, payload: ProviderUpdateRequest, username: str = Depends(current_user), session: AsyncSession = Depends(get_session)) -> dict[str, object]:
+    try:
+        return await update_provider_config(session, provider_id, payload.model_dump(exclude_unset=True), username)
+    except (TypeError, ValueError) as exc:
+        status_code = 404 if str(exc) == "Unknown providerId" else 422
+        raise HTTPException(status_code=status_code, detail=str(exc)) from None
+
+
+@app.delete("/api/providers/{provider_id}")
+async def delete_provider(provider_id: str, username: str = Depends(current_user), session: AsyncSession = Depends(get_session)) -> dict[str, str]:
+    try:
+        await delete_provider_config(session, provider_id, username)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Unknown providerId") from None
+    return {"status": "deleted"}
 
 
 @app.get("/api/settings")
