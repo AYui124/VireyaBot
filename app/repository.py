@@ -183,7 +183,7 @@ def _validate_provider_runtime_options(values: Mapping[str, object]) -> None:
     normalized_headers: set[str] = set()
     for key, value in headers.items():
         normalized = key.lower() if isinstance(key, str) else ""
-        if normalized in {"authorization", "host", "content-type", "content-length"} or normalized in normalized_headers or "\r" in str(key) or "\n" in str(key) or "\r" in str(value) or "\n" in str(value):
+        if normalized in {"authorization", "host", "content-type", "content-length", "x-api-key", "anthropic-version", "openai-organization"} or normalized in normalized_headers or "\r" in str(key) or "\n" in str(key) or "\r" in str(value) or "\n" in str(value):
             raise ValueError("extra_headers contains a forbidden or duplicate header")
         normalized_headers.add(normalized)
         if not isinstance(key, str) or not key.strip() or len(key) > 160:
