@@ -8,7 +8,7 @@
 
 Provider 只负责端点协议、鉴权头、超时和上游错误分类。可信 actor、conversation/scope、workflow version、component ref、capabilities 和权限顺序由 Core/Workflow/Runner 按 `docs/architecture-contract-v1.md` 校验；Provider 不宣称代替这些隔离或锁定版本检查。
 
-业务秘密只从 PostgreSQL 配置服务的 `read_provider_runtime_settings()` 读取。管理 API 通过通用设置接口保存字段，`provider.api_key` 仅返回遮盖值；YAML 不能覆盖秘密字段，启动时会把历史错误 `is_secret=false` 记录重新加密并修复属性。Provider 运行时构建入口为 `build_provider()`。日志/样例使用 `redact_provider_payload()`，不得记录 API key、Authorization、token、密码或完整私有内容。
+业务秘密只从 PostgreSQL 配置服务的 `read_provider_runtime_settings(session, provider_id)` 读取。管理员通过 `/providers` 中文管理页新增、编辑和启停多条资源；`providerId` 是稳定引用，管理 API 读取只返回遮盖/是否配置。连接资源、`ProviderSecret` 和 `ProviderModelConfig` 分表并显式关联，插件宿主只能获得按 ID 构建的 Provider，不获得 Key 或数据库连接。旧单套 `provider.*` 设置由 bootstrap 一次性迁移到 `0002_provider_resources` 后删除，空库保持空状态。YAML 不能覆盖秘密字段，启动时会把历史错误 `is_secret=false` 记录重新加密并修复属性。运行时构建入口为 `build_provider(session, provider_id)`。日志/样例使用 `redact_provider_payload()`，不得记录 API key、Authorization、token、密码或完整私有内容。
 
 ## 首期支持矩阵
 

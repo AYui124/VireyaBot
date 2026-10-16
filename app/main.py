@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse
@@ -13,10 +14,13 @@ from app.db import engine, get_session, session_factory
 from app.repository import (
     authenticate,
     bootstrap,
+    create_provider_config,
+    list_provider_configs,
     read_settings,
     read_snowluma_settings,
     save_settings,
     save_snowluma_settings,
+    update_provider_config,
 )
 from app.security import make_session, session_username
 
@@ -46,6 +50,34 @@ class SnowLumaRequest(BaseModel):
     websocket_url: str = ""
     http_url: str = ""
     token: str | None = None
+
+
+class ProviderCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    protocol_type: Literal["openai_responses"] = "openai_responses"
+    base_url: str = Field(min_length=1, max_length=500)
+    timeout_seconds: float = Field(gt=0, le=600)
+    organization: str = Field(default="", max_length=160)
+    enabled: bool = True
+    api_key: str | None = Field(default=None, max_length=10_000)
+    responses_model: str = Field(min_length=1, max_length=160)
+    embedding_model: str = Field(min_length=1, max_length=160)
+    embedding_dimensions: int | None = Field(default=None, gt=0)
+    native_search_enabled: bool = False
+
+
+class ProviderUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    protocol_type: Literal["openai_responses"] | None = None
+    base_url: str | None = Field(default=None, min_length=1, max_length=500)
+    timeout_seconds: float | None = Field(default=None, gt=0, le=600)
+    organization: str | None = Field(default=None, max_length=160)
+    enabled: bool | None = None
+    api_key: str | None = Field(default=None, max_length=10_000)
+    responses_model: str | None = Field(default=None, min_length=1, max_length=160)
+    embedding_model: str | None = Field(default=None, min_length=1, max_length=160)
+    embedding_dimensions: int | None = Field(default=None, gt=0)
+    native_search_enabled: bool | None = None
 
 
 def current_user(request: Request) -> str:
@@ -81,6 +113,11 @@ async def snowluma_page() -> FileResponse | HTMLResponse:
 
 @app.get("/settings", response_class=HTMLResponse, response_model=None)
 async def settings_page() -> FileResponse | HTMLResponse:
+    return frontend_file()
+
+
+@app.get("/providers", response_class=HTMLResponse, response_model=None)
+async def providers_page() -> FileResponse | HTMLResponse:
     return frontend_file()
 
 
@@ -125,6 +162,28 @@ async def logout(response: Response) -> dict[str, str]:
 @app.get("/api/me")
 async def me(username: str = Depends(current_user)) -> dict[str, str]:
     return {"username": username}
+
+
+@app.get("/api/providers")
+async def get_providers(_: str = Depends(current_user), session: AsyncSession = Depends(get_session)) -> list[dict[str, object]]:
+    return await list_provider_configs(session)
+
+
+@app.post("/api/providers")
+async def post_provider(payload: ProviderCreateRequest, username: str = Depends(current_user), session: AsyncSession = Depends(get_session)) -> dict[str, object]:
+    try:
+        return await create_provider_config(session, payload.model_dump(), username)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.put("/api/providers/{provider_id}")
+async def put_provider(provider_id: str, payload: ProviderUpdateRequest, username: str = Depends(current_user), session: AsyncSession = Depends(get_session)) -> dict[str, object]:
+    try:
+        return await update_provider_config(session, provider_id, payload.model_dump(exclude_unset=True), username)
+    except (TypeError, ValueError) as exc:
+        status_code = 404 if str(exc) == "Unknown providerId" else 422
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
 
 
 @app.get("/api/settings")
