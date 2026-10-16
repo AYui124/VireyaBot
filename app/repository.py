@@ -166,7 +166,6 @@ def _validate_provider_secret(value: object) -> None:
     if len(value) > 4096:
         raise ValueError("api_key exceeds the maximum permitted length")
 
-
 def _validate_provider_values(values: Mapping[str, object]) -> None:
     protocol_type = values.get("protocol_type")
     base_url = values.get("base_url")
